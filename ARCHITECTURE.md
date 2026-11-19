@@ -1,5 +1,33 @@
 # Aurora Viewer architecture
 
+## Standalone terminal chat
+
+`aurora-chat` is an independent executable, not a headless graphical viewer.
+`main.rs` runs a single-threaded Tokio event loop and draws the Ratatui terminal
+only after input, resize or network events. `model.rs` owns UTF-8 editing,
+commands, bounded per-chat transcripts, unread counts and terminal-text
+sanitization; `ui.rs` owns terminal restoration, masked login and responsive
+chat layouts. No accounts, chat logs or viewer settings are read or written.
+See [Terminal chat](docs/CHAT.md).
+
+`aurora-net` retains its default `viewer` feature and public viewer API;
+`viewer.rs`, included at the crate root, contains the existing world modules
+and `NetClient`. The independent `chat` feature with default features disabled
+builds `chat.rs` and the shared login, XML-RPC, TLS, message splitting, social
+parsers and reliable UDP machinery, without `aurora-assets` or `aurora-prim`.
+Chat requests only EventQueueGet and ChatSessionRequest. It stays in its login
+region, acknowledges discarded world packets without decoding them, and keeps
+bounded channels and session state. The event queue has a bounded sender
+variant; the viewer retains its original unbounded sender. Feature unification
+means a workspace-wide build also enables viewer networking; build/install
+`aurora-chat` specifically for the lean executable.
+
+`aurora-i18n` keeps complete catalogs under its default `full` feature. Without
+it, the build script uses the Fluent syntax tree to bundle only shared
+language/number/currency, login/session/common and terminal messages, plus
+terms. The chat executable therefore does not parse or cache the graphical
+viewer's labels; enabling viewer networking restores the full catalogs.
+
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.

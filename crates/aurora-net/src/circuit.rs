@@ -141,6 +141,7 @@ impl Circuit {
         self.send_with(sock, stats, msg, Some(policy), None)
     }
 
+    #[cfg(any(feature = "viewer", test))]
     pub(crate) fn send_offer<M: Msg>(
         &mut self,
         sock: &impl DatagramOut,

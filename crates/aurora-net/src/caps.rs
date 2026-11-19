@@ -176,17 +176,20 @@ pub fn agent_language_body(language: &str, public: bool) -> Llsd {
 
 /// LLAgent::sendMaturityPreferenceToServer: `{"access_prefs": {"max": "M"}}`
 /// (LLViewerRegion::accessToShortString).
+#[cfg(feature = "viewer")]
 pub fn maturity_preference_body(maturity: u8) -> Llsd {
     llsd_map! { "access_prefs" => llsd_map! { "max" => crate::search::access_short_string(maturity) } }
 }
 
 /// LLViewerRegion::setInterestListMode: the InterestList capability's body.
+#[cfg(feature = "viewer")]
 pub fn interest_list_body(mode: crate::InterestListMode) -> Llsd {
     llsd_map! { "mode" => mode.as_str() }
 }
 
 /// LLAgent::processMaturityPreferenceFromServer: the preference the server
 /// kept, `access_prefs.max` ("PG", "M", "A"); SIM_ACCESS_MIN when missing.
+#[cfg(feature = "viewer")]
 pub fn maturity_preference_reply(reply: &Llsd) -> u8 {
     crate::search::short_string_to_access(reply["access_prefs"]["max"].as_str().trim())
 }
@@ -206,6 +209,7 @@ mod language_tests {
     }
 
     #[test]
+    #[cfg(feature = "viewer")]
     fn maturity_preference_is_sent_and_read_as_short_strings() {
         assert!(REQUESTED_CAPS.contains(&"UpdateAgentInformation"));
         let body = maturity_preference_body(crate::search::SIM_ACCESS_MATURE);
@@ -427,7 +431,18 @@ pub async fn resolve_seed(
     retry: SeedRetry,
     still_wanted: impl Fn() -> bool,
 ) -> Result<HashMap<String, String>, CapsError> {
-    let req = Llsd::Array(REQUESTED_CAPS.iter().map(|s| Llsd::from(*s)).collect());
+    resolve_seed_names(http, seed, REQUESTED_CAPS, retry, still_wanted).await
+}
+
+/// Request only the capabilities a client consumes.
+pub async fn resolve_seed_names(
+    http: &reqwest::Client,
+    seed: &str,
+    names: &[&str],
+    retry: SeedRetry,
+    still_wanted: impl Fn() -> bool,
+) -> Result<HashMap<String, String>, CapsError> {
+    let req = Llsd::Array(names.iter().map(|s| Llsd::from(*s)).collect());
     let mut last_err = CapsError::Status(0);
     for attempt in 1..=retry.attempts.max(1) {
         let reply = match tokio::time::timeout(retry.timeout, post_llsd(http, seed, &req)).await {
@@ -583,6 +598,48 @@ pub async fn event_queue_loop(
     tx: mpsc::UnboundedSender<EqMessage>,
     stats: std::sync::Arc<crate::NetStats>,
 ) {
+    poll_events(http, url, sim, QueueSender::Unbounded(tx), stats).await;
+}
+
+/// Backpressure for clients which retain only a bounded amount of chat.
+pub async fn bounded_event_queue_loop(
+    http: reqwest::Client,
+    url: String,
+    sim: std::net::SocketAddr,
+    tx: mpsc::Sender<EqMessage>,
+    stats: std::sync::Arc<crate::NetStats>,
+) {
+    poll_events(http, url, sim, QueueSender::Bounded(tx), stats).await;
+}
+
+enum QueueSender {
+    Unbounded(mpsc::UnboundedSender<EqMessage>),
+    Bounded(mpsc::Sender<EqMessage>),
+}
+
+impl QueueSender {
+    fn is_closed(&self) -> bool {
+        match self {
+            Self::Unbounded(tx) => tx.is_closed(),
+            Self::Bounded(tx) => tx.is_closed(),
+        }
+    }
+
+    async fn send(&self, event: EqMessage) -> Result<(), ()> {
+        match self {
+            Self::Unbounded(tx) => tx.send(event).map_err(|_| ()),
+            Self::Bounded(tx) => tx.send(event).await.map_err(|_| ()),
+        }
+    }
+}
+
+async fn poll_events(
+    http: reqwest::Client,
+    url: String,
+    sim: std::net::SocketAddr,
+    tx: QueueSender,
+    stats: std::sync::Arc<crate::NetStats>,
+) {
     use std::sync::atomic::Ordering;
     let mut ack: Llsd = Llsd::Undef;
     let mut errors = 0u32;
@@ -614,7 +671,7 @@ pub async fn event_queue_loop(
                                         message: ev["message"].as_str().to_owned(),
                                         body: ev["body"].clone(),
                                     };
-                                    if tx.send(EqMessage::Event(e)).is_err() {
+                                    if tx.send(EqMessage::Event(e)).await.is_err() {
                                         return;
                                     }
                                 }
@@ -654,7 +711,7 @@ pub async fn event_queue_loop(
             Next::GiveUp => {
                 stats.eq_errors.fetch_add(1, Ordering::Relaxed);
                 log::warn!("event queue for {sim}: {why}, giving up after {MAX_ERRORS} errors in a row");
-                let _ = tx.send(EqMessage::Lost(sim));
+                let _ = tx.send(EqMessage::Lost(sim)).await;
                 return;
             }
         }

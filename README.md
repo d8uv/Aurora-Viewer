@@ -25,6 +25,22 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
+### Terminal chat client
+
+For chat without the 3D viewer, build the separate **Aurora Chat** executable:
+
+```bash
+cargo run -p aurora-chat -- --demo
+cargo run -p aurora-chat
+```
+
+The first command is entirely offline. The second prompts privately for your
+Second Life login and provides Local and group chat with IRC-style commands.
+It does not build the renderer, windowing, asset, audio, voice or media stacks.
+The graphical viewer is unchanged. See [Terminal chat](docs/CHAT.md) for
+installation, commands, resource limits and the live-testing checklist.
+**Experimental: live-grid validation is still required.**
+
 **Multi-threaded from the ground up: parallel loading, ultra fast teleports, built for today's hardware with Vulkan and Rust.**  
 <img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  
 

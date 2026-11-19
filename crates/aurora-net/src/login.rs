@@ -535,7 +535,7 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
     let sim_ip: Ipv4Addr = v["sim_ip"].as_str().parse().map_err(|_| LoginError::Malformed("sim_ip"))?;
     let sim_port = u16::try_from(v["sim_port"].as_i32()).map_err(|_| LoginError::Malformed("sim_port"))?;
     let inventory_root = v["inventory-root"][0]["folder_id"].as_uuid();
-    let size = |k: &str| crate::session::region_side(u32::try_from(v[k].as_i32()).unwrap_or(256));
+    let size = |k: &str| u32::try_from(v[k].as_i32()).unwrap_or(256).clamp(256, 4096);
     Ok(LoginResponse {
         agent_id,
         session_id: uuid("session_id"),
@@ -566,11 +566,29 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
 /// `next_server` allows. `http` follows its HTTP redirects with
 /// `redirect_policy`.
 pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginResponse, LoginError> {
+    login_inner(http, req, None).await
+}
+
+/// A non-world client does not need inventory, outfits or voice in its login reply.
+pub async fn login_with_options(http: &reqwest::Client, req: &LoginRequest, options: &[&str]) -> Result<LoginResponse, LoginError> {
+    login_inner(http, req, Some(options)).await
+}
+
+async fn login_inner(http: &reqwest::Client, req: &LoginRequest, options: Option<&[&str]>) -> Result<LoginResponse, LoginError> {
     let mut uri = req.login_uri.clone();
     let mut method = "login_to_simulator".to_owned();
     let accepted = &req.accepted_next_servers;
     for _attempt in 0..5 {
-        let body = xmlrpc::build_call(&method, &build_params(req, &uri));
+        let mut params = build_params(req, &uri);
+        if let Some(options) = options
+            && let Llsd::Map(map) = &mut params
+        {
+            map.insert(
+                "options".into(),
+                Llsd::Array(options.iter().map(|name| Llsd::from(*name)).collect()),
+            );
+        }
+        let body = xmlrpc::build_call(&method, &params);
         let resp = http
             .post(&uri)
             .header("Content-Type", "text/xml")

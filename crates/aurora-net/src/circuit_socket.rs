@@ -62,6 +62,7 @@ impl CircuitSocket {
         }
     }
 
+    #[cfg(any(feature = "viewer", test))]
     pub fn relayed(sock: Arc<UdpSocket>, relay: SocketAddr, announced: Option<SocketAddr>) -> Self {
         Self {
             sock,

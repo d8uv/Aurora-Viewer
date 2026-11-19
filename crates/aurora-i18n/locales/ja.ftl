@@ -15899,3 +15899,69 @@ game-control-action-truck-right = トラック →
 game-control-action-boom-up = ブーム ↑
 game-control-action-boom-down = ブーム ↓
 game-control-action-escape = ESC
+tui-local = 近くのチャット
+tui-backlog = 受信に追いつかなくなりました。メッセージを通知なく破棄せず、セッションを停止しました。
+tui-group-limit = このクライアントで保持できる数を超えるグループが送信されました。
+tui-send-busy = 送信待ちのメッセージが多すぎます。シミュレーターの応答を待って再試行してください。
+tui-not-member = このグループのメンバーではありません。
+tui-session-limit = グループチャットの数が上限に達しました。/part で閉じてください。
+tui-invalid-text = 制御文字を含まない、4096 UTF-8バイト以内の空でないメッセージを入力してください。
+tui-group-not-ready = グループチャットの準備中、またはモデレーターによりテキストチャットがミュートされています。
+tui-moderation-changed = グループでのテキストチャットの権限が変更されました。
+tui-join-failed = グループチャットの要求に失敗しました：{ $reason }
+tui-no-capabilities = リージョンからグループチャットに必要な機能が提供されませんでした。
+tui-queue-lost = イベントキューが閉じました。グループチャットを使用するには再接続してください。
+tui-delivery-failed = 高信頼メッセージの確認応答がありません。配信を確認できないためセッションを停止しました。
+tui-connecting = 接続中…
+tui-logout-timeout = ログアウトを確認できませんでした。グリッド側のセッション終了まで少しお待ちください。
+tui-connection-timeout = シミュレーターからの応答がタイムアウトしました。
+tui-join-timeout = グループチャットの要求がタイムアウトしました。/join で再試行してください。
+tui-connected-as = { $name } として接続しました。
+tui-session-ready = グループチャットの準備ができました。
+tui-groups-heading = 所属グループ（/join に番号または完全な名前を指定）：
+tui-join-usage = /groups を表示し、/join <番号または完全なグループ名> を使用してください。所属グループのみ利用できます。
+tui-part-local = 近くのチャットは閉じられません。
+tui-local-command = /whisper と /shout は近くのチャットでのみ使用でき、メッセージが必要です。
+tui-unknown-command = 不明なコマンドです。/help を使用してください。先頭の / を送信するには // を入力します。
+tui-help =
+    /groups — 所属グループの一覧
+    /join <番号または完全な名前> — 所属グループのチャットを開く
+    /part — グループを退会せずにチャットを閉じる
+    /local — 近くのチャットに切り替える
+    /next、/prev、Tab、Shift-Tab — チャットを切り替える
+    /whisper <テキスト>、/shout <テキスト> — 近くでささやく・叫ぶ
+    /me <動作> — 動作を送信、//テキスト — 先頭の / を送信
+    PageUp / PageDown — スクロール、Ctrl-U — 入力を消去
+    /quit、Ctrl-C、Esc — ログアウトして終了
+tui-login-required = アカウント名とパスワードを入力してください。どちらも保存されません。
+tui-accepted = 同意しました。パスワードを再入力し、Enterで再試行してください。
+tui-declined = 同意しませんでした。再試行を選択するまでログインしません。
+tui-needs-terminal = Aurora Chatには対話式の標準入出力端末が必要です。
+tui-login-intro = Second Lifeチャット専用。認証情報とチャットはメモリー内のみで、ログやアカウントを保存しません。
+tui-username = アカウント名
+tui-password = パスワード
+tui-mfa = MFAコード（任意）
+tui-home = ホーム
+tui-last = 最後の場所
+tui-login-keys = Tab：次の項目 | Enter：接続 | F2：開始位置 { $start } | Esc：終了
+tui-approval = 下のサーバーメッセージをお読みください（PageUp / PageDown）。Y：同意、N：拒否。自動的に同意することはありません。
+tui-buffers = チャット
+tui-input = メッセージ
+tui-keys = Tab/Shift-Tab：切り替え | PgUp/PgDn：スクロール | /help | Ctrl-C：終了
+tui-language-error = 対応言語：--language=en、--language=fr、--language=ja。
+tui-argument-error = 不明な引数です。--help を参照してください。認証情報は引数ではなく端末で入力します。
+tui-cli-help =
+    Aurora Chat — 軽量なSecond Life端末チャット
+    使用方法：aurora-chat [--demo] [--language=en|fr|ja] [--help] [--version]
+    オプションなしで起動し、端末でログインしてください。パスワードは伏せ字で表示され、保存されません。
+    --demo は完全にオフラインで、グリッドに接続しません。
+    近くのチャットとグループチャット専用：3D、メディア、音声、インベントリ、個別IMはありません。
+tui-error = エラー：{ $reason }
+tui-demo-group = デモグループ
+tui-demo-you = 自分（オフラインデモ）
+tui-demo = オフラインデモ — ネットワークなし
+tui-offline = オフライン
+tui-online = オンライン
+tui-demo-intro = オフラインデモです。/groups の後に /join 1 でグループチャットを開きます。メッセージはローカル表示のみです。
+tui-welcome = /help でコマンドを表示、Tabでチャットを切り替えます。ディスクには書き込みません。
+tui-quitting = ログアウト中…

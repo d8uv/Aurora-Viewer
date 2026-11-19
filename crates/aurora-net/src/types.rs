@@ -15,8 +15,7 @@ pub mod beacon {
     pub const FOCUS_MAP: u32 = 0x2;
 }
 
-/// Region identifier: global origin in meters packed as `(x << 32) | y`.
-pub type RegionHandle = u64;
+pub use crate::{InventoryOfferStatus, RegionHandle};
 
 /// Keep the source of each PreloadSound block through the viewer's filters.
 #[derive(Debug, Clone, Copy)]
@@ -1615,14 +1614,6 @@ impl Default for TouchSurface {
     }
 }
 /// Progress of an outgoing inventory offer on its original reliable circuit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InventoryOfferStatus {
-    /// The datagram was handed to the socket, possibly on a retry.
-    Transmitted,
-    /// The simulator acknowledged that datagram. Acceptance by the resident is separate.
-    Acknowledged,
-}
-
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.

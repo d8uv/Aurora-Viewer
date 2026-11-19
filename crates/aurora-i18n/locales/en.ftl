@@ -16022,3 +16022,69 @@ game-control-action-truck-right = Truck →
 game-control-action-boom-up = Boom ↑
 game-control-action-boom-down = Boom ↓
 game-control-action-escape = ESC
+tui-local = Local
+tui-backlog = Chat could not keep up with incoming traffic. The session was stopped rather than silently losing messages.
+tui-group-limit = The server supplied more groups than this client can retain.
+tui-send-busy = Too many messages are pending. Wait for the simulator and try again.
+tui-not-member = You are not a member of that group.
+tui-session-limit = Too many open group chats. Use /part to close one.
+tui-invalid-text = Enter a nonempty message of at most 4096 UTF-8 bytes, without control characters.
+tui-group-not-ready = Group chat is not ready, or a moderator has muted your text chat.
+tui-moderation-changed = Your group text-chat moderation status changed.
+tui-join-failed = Group chat request failed: { $reason }
+tui-no-capabilities = The region did not provide the capabilities required for group chat.
+tui-queue-lost = The event queue closed. Group chat is no longer available; reconnect.
+tui-delivery-failed = A reliable message was not acknowledged. Delivery is uncertain; the session was stopped.
+tui-connecting = Connecting…
+tui-logout-timeout = Logout was not confirmed. The grid may take a little time to release the session.
+tui-connection-timeout = The simulator did not respond in time.
+tui-join-timeout = The group chat request timed out. Use /join to try again.
+tui-connected-as = Connected as { $name }.
+tui-session-ready = Group chat is ready.
+tui-groups-heading = Your groups (use /join followed by the number or full name):
+tui-join-usage = Use /groups, then /join <number or full group name>. Only existing memberships are supported.
+tui-part-local = Local chat cannot be closed.
+tui-local-command = /whisper and /shout require a message and can only be used in Local.
+tui-unknown-command = Unknown command. Use /help, or // to send a literal leading slash.
+tui-help =
+    /groups — list your groups
+    /join <number or full name> — open a group chat you belong to
+    /part — close this chat session, without leaving the group
+    /local — switch to local chat
+    /next, /prev, Tab, Shift-Tab — switch buffers
+    /whisper <text>, /shout <text> — speak in Local
+    /me <action> — send an action; //text — send a literal slash
+    PageUp / PageDown — scroll; Ctrl-U — clear input
+    /quit, Ctrl-C or Esc — log out and exit
+tui-login-required = Enter your account name and password. Neither is saved.
+tui-accepted = Accepted. Re-enter your password and press Enter to retry.
+tui-declined = Not accepted. No login will be attempted until you choose to retry.
+tui-needs-terminal = Aurora Chat needs an interactive terminal on stdin and stdout.
+tui-login-intro = Second Life chat only. Credentials and chat stay in memory; no logs or saved accounts.
+tui-username = Account name
+tui-password = Password
+tui-mfa = MFA code (optional)
+tui-home = Home
+tui-last = Last location
+tui-login-keys = Tab: next field | Enter: connect | F2: start at { $start } | Esc: quit
+tui-approval = Read the server's message below (PageUp / PageDown). Y: accept, N: decline. Acceptance is never automatic.
+tui-buffers = Chats
+tui-input = Message
+tui-keys = Tab/Shift-Tab: chat | PgUp/PgDn: scroll | /help | Ctrl-C: quit
+tui-language-error = Supported languages: --language=en, --language=fr, --language=ja.
+tui-argument-error = Unknown argument. Use --help. Credentials are only entered interactively, never as arguments.
+tui-cli-help =
+    Aurora Chat — lightweight Second Life terminal chat
+    Usage: aurora-chat [--demo] [--language=en|fr|ja] [--help] [--version]
+    With no options, enter your login in the terminal. Passwords are masked and never saved.
+    --demo is entirely offline and never contacts a grid.
+    Local and group chat only: no 3D, media, voice, inventory or direct IMs.
+tui-error = Error: { $reason }
+tui-demo-group = Demo group
+tui-demo-you = You (offline demo)
+tui-demo = Offline demo — no network
+tui-offline = Offline
+tui-online = Online
+tui-demo-intro = Offline demo. /groups then /join 1 opens a simulated group chat. Messages are only echoed locally.
+tui-welcome = Type /help for commands. Tab switches chats. Nothing is written to disk.
+tui-quitting = Logging out…

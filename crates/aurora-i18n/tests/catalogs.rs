@@ -125,6 +125,7 @@ fn fluent_renders_english_and_french_plural_rules() {
 }
 
 #[test]
+#[cfg(feature = "full")]
 fn short_dates_follow_the_language_order() {
     use aurora_i18n::tr_in;
     assert_eq!(tr_in!("en", "date-day-month", day = "28", month = "Oct"), "28 Oct");
@@ -142,6 +143,17 @@ fn short_dates_follow_the_language_order() {
         ),
         "2022年6月6日"
     );
+}
+
+#[test]
+#[cfg(not(feature = "full"))]
+fn chat_catalogs_exclude_graphical_labels_and_stay_small() {
+    for &(language, source) in SOURCES {
+        assert!(source.len() < 64 * 1024, "{language}: {} bytes", source.len());
+        assert!(source.contains("tui-cli-help ="));
+        assert!(source.contains("login-server-error ="));
+        assert!(!source.contains("date-day-month ="));
+    }
 }
 
 #[test]
@@ -213,6 +225,7 @@ fn japanese_system_locales_select_the_japanese_catalog() {
 
 #[test]
 fn japanese_dates_and_numbers_follow_japanese_conventions() {
+    #[cfg(feature = "full")]
     assert_eq!(
         aurora_i18n::tr_in!("ja", "profile-date", month = "09", day = "12", year = "2026"),
         "2026年09月12日"

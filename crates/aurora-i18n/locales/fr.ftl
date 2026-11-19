@@ -16028,3 +16028,69 @@ game-control-action-truck-right = Travelling latéral →
 game-control-action-boom-up = Grue ↑
 game-control-action-boom-down = Grue ↓
 game-control-action-escape = Échap
+tui-local = Proximité
+tui-backlog = Le client ne suit plus le trafic entrant. La session a été arrêtée plutôt que de perdre des messages en silence.
+tui-group-limit = Le serveur a envoyé plus de groupes que ce client ne peut en conserver.
+tui-send-busy = Trop de messages sont en attente. Attendez la réponse du simulateur et réessayez.
+tui-not-member = Vous n'êtes pas membre de ce groupe.
+tui-session-limit = Trop de discussions de groupe ouvertes. Fermez-en une avec /part.
+tui-invalid-text = Saisissez un message non vide d'au plus 4096 octets UTF-8, sans caractère de contrôle.
+tui-group-not-ready = La discussion de groupe n'est pas prête, ou un modérateur vous a interdit d'écrire.
+tui-moderation-changed = Votre autorisation d'écrire dans le groupe a changé.
+tui-join-failed = La demande de discussion de groupe a échoué : { $reason }
+tui-no-capabilities = La région n'a pas fourni les capacités nécessaires aux discussions de groupe.
+tui-queue-lost = La file d'événements est fermée. Les discussions de groupe sont indisponibles ; reconnectez-vous.
+tui-delivery-failed = Un message fiable n'a pas été acquitté. Sa livraison est incertaine ; la session a été arrêtée.
+tui-connecting = Connexion…
+tui-logout-timeout = La déconnexion n'a pas été confirmée. La grille peut mettre un moment à libérer la session.
+tui-connection-timeout = Le simulateur n'a pas répondu à temps.
+tui-join-timeout = Le délai de la demande de discussion de groupe a expiré. Réessayez avec /join.
+tui-connected-as = Connecté en tant que { $name }.
+tui-session-ready = La discussion de groupe est prête.
+tui-groups-heading = Vos groupes (utilisez /join suivi du numéro ou du nom complet) :
+tui-join-usage = Utilisez /groups puis /join <numéro ou nom complet>. Seulement pour les groupes dont vous êtes membre.
+tui-part-local = La discussion de proximité ne peut pas être fermée.
+tui-local-command = /whisper et /shout exigent un message et ne s'utilisent qu'en Proximité.
+tui-unknown-command = Commande inconnue. Utilisez /help, ou // pour envoyer une barre oblique initiale.
+tui-help =
+    /groups — lister vos groupes
+    /join <numéro ou nom complet> — ouvrir une discussion de groupe
+    /part — fermer cette discussion sans quitter le groupe
+    /local — revenir à la discussion de proximité
+    /next, /prev, Tab, Maj-Tab — changer de discussion
+    /whisper <texte>, /shout <texte> — chuchoter ou crier en Proximité
+    /me <action> — envoyer une action ; //texte — envoyer une barre oblique
+    Page préc. / Page suiv. — défiler ; Ctrl-U — vider la saisie
+    /quit, Ctrl-C ou Échap — se déconnecter et quitter
+tui-login-required = Saisissez votre nom de compte et votre mot de passe. Ils ne sont pas enregistrés.
+tui-accepted = Accepté. Saisissez de nouveau votre mot de passe et appuyez sur Entrée pour réessayer.
+tui-declined = Refusé. Aucune connexion ne sera tentée tant que vous ne choisissez pas de réessayer.
+tui-needs-terminal = Aurora Chat exige un terminal interactif en entrée et en sortie.
+tui-login-intro = Discussion Second Life uniquement. Identifiants et messages en mémoire ; ni journal ni compte enregistré.
+tui-username = Nom du compte
+tui-password = Mot de passe
+tui-mfa = Code MFA (facultatif)
+tui-home = Domicile
+tui-last = Dernier emplacement
+tui-login-keys = Tab : champ suivant | Entrée : connexion | F2 : départ à { $start } | Échap : quitter
+tui-approval = Lisez le message du serveur ci-dessous (Page préc. / Page suiv.). Y : accepter, N : refuser. Rien n'est accepté automatiquement.
+tui-buffers = Discussions
+tui-input = Message
+tui-keys = Tab/Maj-Tab : discussion | Pg préc./suiv. : défiler | /help | Ctrl-C : quitter
+tui-language-error = Langues disponibles : --language=en, --language=fr, --language=ja.
+tui-argument-error = Argument inconnu. Utilisez --help. Les identifiants se saisissent dans le terminal, jamais en arguments.
+tui-cli-help =
+    Aurora Chat — discussion Second Life légère dans le terminal
+    Usage : aurora-chat [--demo] [--language=en|fr|ja] [--help] [--version]
+    Sans option, saisissez vos identifiants dans le terminal. Le mot de passe est masqué et jamais enregistré.
+    --demo est entièrement hors ligne et ne contacte jamais de grille.
+    Proximité et groupes uniquement : ni 3D, médias, voix, inventaire ni messages privés.
+tui-error = Erreur : { $reason }
+tui-demo-group = Groupe de démonstration
+tui-demo-you = Vous (démo hors ligne)
+tui-demo = Démo hors ligne — aucun réseau
+tui-offline = Hors ligne
+tui-online = En ligne
+tui-demo-intro = Démo hors ligne. /groups puis /join 1 ouvre une discussion de groupe simulée. Les messages sont seulement affichés localement.
+tui-welcome = /help affiche les commandes. Tab change de discussion. Rien n'est écrit sur disque.
+tui-quitting = Déconnexion…
