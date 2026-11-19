@@ -35,3 +35,11 @@ updates:
     labels: [maintenance]
     commit-message:
       prefix: "chore(ci)"
+
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: [maintenance]
+    commit-message:
+      prefix: "chore(devcontainer)"
