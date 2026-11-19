@@ -330,6 +330,10 @@ impl Model {
                 }
             }
             Event::Left(id) => self.remove(Chat::Group(id)),
+            Event::Diagnostics(lines) => {
+                self.notice(tr!("tui-diagnostics-intro"));
+                self.append(self.current, None, "", &lines.join("\n"));
+            }
             Event::Notice(text) => self.notice(&text),
         }
     }
@@ -475,6 +479,7 @@ impl Model {
                 }
                 Action::None
             }
+            "/diagnostics" => Action::Send(Command::Diagnostics),
             "/groups" => {
                 self.notice(tr!("tui-groups-heading"));
                 let lines: Vec<_> = self
@@ -636,6 +641,25 @@ mod tests {
             model.format_entry(&entries[1]),
             format!("[{}] Resident: first", entries[1].timestamp)
         );
+    }
+
+    #[test]
+    fn diagnostics_are_a_local_snapshot_command_in_every_chat() {
+        let mut model = Model::default();
+        assert!(matches!(submit(&mut model, "/diagnostics"), Action::Send(Command::Diagnostics)));
+        model.event(Event::Direct {
+            id: Uuid::from_u128(11),
+            sender: Uuid::from_u128(11),
+            from: "Peer".into(),
+            text: "hello".into(),
+        });
+        model.switch(1);
+        assert!(matches!(submit(&mut model, "/diagnostics"), Action::Send(Command::Diagnostics)));
+        model.event(Event::Diagnostics(vec!["diagnostics=1".into(), "received_im_dialogs: 19=1".into()]));
+        let lines: Vec<_> = model.active().lines.iter().map(|line| model.format_entry(line)).collect();
+        assert!(lines.iter().any(|line| line.ends_with("* diagnostics=1")));
+        assert!(lines.iter().any(|line| line.ends_with("* received_im_dialogs: 19=1")));
+        assert!(lines.iter().any(|line| line.contains(&*tr!("tui-diagnostics-intro"))));
     }
 
     #[test]

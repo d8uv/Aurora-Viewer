@@ -99,6 +99,7 @@ fn demo_command(model: &mut Model, command: Command) {
             from: tr!("tui-demo-you").into(),
             text,
         }),
+        Command::Diagnostics => model.event(Event::Diagnostics(vec!["mode=offline_demo simulated=true".into()])),
         Command::Logout => {}
     }
 }
@@ -161,6 +162,11 @@ fn demo_residents(model: &mut Model) {
         sender: friend,
         from: "Sakura Example".into(),
         text: tr!("tui-demo-direct").into(),
+    });
+    model.event(Event::Local {
+        sender: None,
+        from: "Demo HUD".into(),
+        text: tr!("tui-demo-object-message").into(),
     });
 }
 
@@ -346,6 +352,18 @@ mod tests {
         assert_eq!(model.buffers.len(), 2);
         assert!(model.radar_rows().iter().any(|row| row.contains("Sakura (Sakura Example)")));
         assert_eq!(model.buffers[1].unread, 1);
+        assert!(
+            model.buffers[0]
+                .lines
+                .iter()
+                .any(|entry| model.format_entry(entry).contains("Demo HUD:"))
+        );
+        demo_command(&mut model, Command::Diagnostics);
+        assert!(
+            model
+                .format_entry(model.active().lines.back().unwrap())
+                .contains("mode=offline_demo simulated=true")
+        );
     }
 
     #[test]

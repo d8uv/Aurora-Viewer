@@ -16065,6 +16065,7 @@ tui-help =
     /next, /prev, Tab, Maj-Tab — changer de discussion
     /whisper <texte>, /shout <texte> — chuchoter ou crier en Proximité
     /me <action> — envoyer une action ; //texte — envoyer une barre oblique
+    /diagnostics — afficher un état du protocole sans données privées pour diagnostiquer les HUD et les animations
     Page préc. / Page suiv. — défiler ; Ctrl-U — vider la saisie
     /quit, Ctrl-C ou Échap — se déconnecter et quitter
 tui-login-required = Saisissez votre nom de compte et votre mot de passe. Ils ne sont pas enregistrés.
@@ -16089,7 +16090,7 @@ tui-cli-help =
     Usage : aurora-chat [--demo] [--language=en|fr|ja] [--help] [--version]
     Sans option, saisissez vos identifiants dans le terminal. Le mot de passe est masqué et jamais enregistré.
     --demo est entièrement hors ligne et ne contacte jamais de grille.
-    Proximité et groupes uniquement : ni 3D, médias, voix, inventaire ni messages privés.
+    Proximité, groupes, IM et messages d’objets : ni 3D, médias, voix ni inventaire.
 tui-error = Erreur : { $reason }
 tui-demo-group = Groupe de démonstration
 tui-demo-you = Vous (démo hors ligne)
@@ -16117,3 +16118,7 @@ tui-resident-limit = La liste d’amis dépasse la limite du client.
 tui-channel-sent = Envoyé sur le canal { $channel } : { $text }
 tui-list-page = Page { $page }/{ $pages }
 tui-list-page-usage = Utilisez /friends [page] ou /radar [page] avec un numéro de page valide. Chaque page contient au plus 100 résidents.
+tui-diagnostics-intro = État de diagnostic : aucun nom, identifiant, lieu ni texte de discussion. Copiez les compteurs du protocole ci-dessous, pas votre historique. Un acquittement ne prouve pas qu’un script s’est exécuté.
+tui-script-permissions-unsupported = Un script demande des permissions. Ce client ne peut pas encore y répondre ; rien n’a été accordé. /diagnostics affiche les bits de permissions demandés.
+tui-script-dialog-unsupported = Un script a ouvert une boîte de dialogue ou de saisie. Ce client ne peut pas encore y répondre. /diagnostics confirme sa réception ; aucune réponse n’a été envoyée.
+tui-demo-object-message = Ceci est un IM d’objet simulé, affiché dans Local sans ouvrir d’IM avec son propriétaire.

@@ -27,6 +27,15 @@ coarse altitude is saturated. The People API record parser and coarse-coordinate
 scaling live in shared `social.rs`; the viewer keeps its existing API.
 Direct IMs use peer IDs and XOR session IDs, offline friend flags and queued
 offline-message retrieval. Script channels remain local simulator messages.
+Object IMs (`IM_FROM_TASK`) and object alerts are shown in Local without
+mistaking their sender (the owner) for a resident correspondent.
+`chat/diagnostics.rs` retains bounded numeric protocol counters and only named
+built-in self-animation transition states, never arbitrary animation IDs.
+`/diagnostics` displays an on-demand in-memory snapshot; it stores no packet
+contents, credentials, names, locations or capability URLs. Script dialogs and
+permission requests produce a one-time unsupported-feature notice, never an
+automatic reply or permission grant. Animation packets are observed for
+diagnostics only; no assets are fetched and no animation commands are sent.
 The event queue has a bounded sender
 variant; the viewer retains its original unbounded sender. Feature unification
 means a workspace-wide build also enables viewer networking; build/install

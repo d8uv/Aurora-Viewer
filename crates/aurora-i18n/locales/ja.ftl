@@ -15936,6 +15936,7 @@ tui-help =
     /next、/prev、Tab、Shift-Tab — チャットを切り替える
     /whisper <テキスト>、/shout <テキスト> — 近くでささやく・叫ぶ
     /me <動作> — 動作を送信、//テキスト — 先頭の / を送信
+    /diagnostics — HUD やアニメーションの調査用に個人情報を含まない通信状態を表示
     PageUp / PageDown — スクロール、Ctrl-U — 入力を消去
     /quit、Ctrl-C、Esc — ログアウトして終了
 tui-login-required = アカウント名とパスワードを入力してください。どちらも保存されません。
@@ -15960,7 +15961,7 @@ tui-cli-help =
     使用方法：aurora-chat [--demo] [--language=en|fr|ja] [--help] [--version]
     オプションなしで起動し、端末でログインしてください。パスワードは伏せ字で表示され、保存されません。
     --demo は完全にオフラインで、グリッドに接続しません。
-    近くのチャットとグループチャット専用：3D、メディア、音声、インベントリ、個別IMはありません。
+    近くのチャット、グループ、個別 IM、オブジェクトのメッセージに対応。3D、メディア、音声、インベントリはありません。
 tui-error = エラー：{ $reason }
 tui-demo-group = デモグループ
 tui-demo-you = 自分（オフラインデモ）
@@ -15988,3 +15989,7 @@ tui-resident-limit = フレンド一覧がクライアントの上限を超え�
 tui-channel-sent = チャンネル { $channel } に送信：{ $text }
 tui-list-page = { $page }/{ $pages } ページ
 tui-list-page-usage = /friends [ページ] または /radar [ページ] に有効なページ番号を指定してください。1ページに最大100人を表示します。
+tui-diagnostics-intro = 診断情報：名前、ID、場所、チャット本文は含みません。履歴ではなく、以下の通信カウンターをコピーしてください。確認応答はスクリプトの実行を保証しません。
+tui-script-permissions-unsupported = スクリプトが権限を要求しました。このクライアントはまだ権限要求に応答できません。何も許可していません。要求された権限ビットは /diagnostics で確認できます。
+tui-script-dialog-unsupported = スクリプトがダイアログまたは入力欄を開きました。このクライアントはまだ応答できません。/diagnostics で受信を確認できます。返信は送信していません。
+tui-demo-object-message = これはデモのオブジェクト IM です。所有者への IM を開かず、Local に表示します。

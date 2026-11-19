@@ -5,6 +5,7 @@
 //! No world model, asset fetcher, inventory, appearance, neighbours or media.
 //! Task traffic cannot be disabled: the simulator also sends chat on it.
 
+mod diagnostics;
 mod people;
 pub use people::{Friend, MAX_RESIDENTS, Nearby, ResidentName};
 
@@ -31,6 +32,7 @@ pub const MAX_GROUPS: usize = 128;
 pub const MAX_SESSIONS: usize = 64;
 pub const MAX_INPUT_BYTES: usize = 4096;
 const MAX_PENDING: usize = 128;
+const CHAT_THROTTLES: [f32; 7] = [8000.0, 0.0, 0.0, 0.0, 16000.0, 0.0, 0.0];
 const CHAT_CAPS: &[&str] = &["EventQueueGet", "ChatSessionRequest", "GetDisplayNames"];
 const CHAT_OPTIONS: &[&str] = &["login-flags", "max-agent-groups", "adult_compliant", "buddy-list"];
 
@@ -41,6 +43,7 @@ pub enum Command {
     Leave(Uuid),
     Group { id: Uuid, text: String },
     Direct { id: Uuid, text: String },
+    Diagnostics,
     Logout,
 }
 
@@ -71,6 +74,7 @@ pub enum Event {
     Nearby(Vec<Nearby>),
     Joined(Uuid),
     Left(Uuid),
+    Diagnostics(Vec<String>),
     Notice(String),
 }
 
@@ -99,6 +103,7 @@ struct Session {
     muted: HashSet<Uuid>,
     sent: BTreeMap<u32, Sent>,
     people: people::People,
+    diagnostics: diagnostics::State,
     position: Vec3,
     arrived: bool,
     logged_out: bool,
@@ -154,10 +159,7 @@ impl Session {
         throttle.agent_data.circuit_code = self.login.circuit_code;
         // Deliberate chat-only difference from LLViewerThrottle: no world
         // channels; a small Task allowance retains chat and control traffic.
-        throttle.throttle.throttles = [8000.0_f32, 0.0, 0.0, 0.0, 16000.0, 0.0, 0.0]
-            .into_iter()
-            .flat_map(f32::to_le_bytes)
-            .collect();
+        throttle.throttle.throttles = CHAT_THROTTLES.into_iter().flat_map(f32::to_le_bytes).collect();
         self.send(&throttle, true);
     }
 
@@ -245,6 +247,8 @@ impl Session {
         } else if p.id == ChatFromSimulator::ID {
             let m: ChatFromSimulator = p.decode().map_err(decode)?;
             let c = m.chat_data;
+            self.diagnostics
+                .local_chat(c.chat_type, c.audible == 1 && !matches!(c.chat_type, 4 | 5));
             if c.audible == 1 && !matches!(c.chat_type, 4 | 5) {
                 // CHAT_SOURCE_AGENT only: a scripted object must keep its own name.
                 let sender = (c.source_type == 1 && !c.source_id.is_nil()).then_some(c.source_id);
@@ -270,6 +274,7 @@ impl Session {
         } else if p.id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = p.decode().map_err(decode)?;
             let b = m.message_block;
+            self.diagnostics.instant_message(b.dialog);
             let sender = m.agent_data.agent_id;
             let from = field_str(&b.from_agent_name);
             if b.dialog == 17 && (self.joined.contains(&b.id) || self.joining.contains_key(&b.id)) && sender != self.login.agent_id {
@@ -288,6 +293,48 @@ impl Session {
                     from,
                     text: field_str(&b.message),
                 })?;
+            } else if matches!(b.dialog, 19 | 31) && b.to_agent_id == self.login.agent_id {
+                // LLIMProcessing::processNewMessage, IM_FROM_TASK /
+                // IM_FROM_TASK_AS_ALERT (indra/newview/llimprocessing.cpp).
+                // The sender is the object's owner, not a resident to reply to.
+                self.emit(Event::Local {
+                    sender: None,
+                    from,
+                    text: field_str(&b.message),
+                })?;
+            } else if b.dialog == 1 && b.to_agent_id == self.login.agent_id {
+                self.emit(Event::Notice(field_str(&b.message)))?;
+            }
+        } else if p.id == ScriptQuestion::ID {
+            let m: ScriptQuestion = p.decode().map_err(decode)?;
+            if self
+                .diagnostics
+                .script_question(m.data.questions, !m.experience.experience_id.is_nil())
+            {
+                self.emit(Event::Notice(tr!("tui-script-permissions-unsupported").into()))?;
+            }
+        } else if p.id == ScriptDialog::ID {
+            let _: ScriptDialog = p.decode().map_err(decode)?;
+            if self.diagnostics.script_dialog() {
+                self.emit(Event::Notice(tr!("tui-script-dialog-unsupported").into()))?;
+            }
+        } else if p.id == ScriptControlChange::ID {
+            let m: ScriptControlChange = p.decode().map_err(decode)?;
+            self.diagnostics.script_controls(&m);
+        } else if p.id == AvatarAnimation::ID {
+            // Sender.ID is the leading UUID; leave other avatars' animation
+            // lists undecoded, just like their other world updates.
+            if p.body.starts_with(self.login.agent_id.as_bytes()) {
+                let m: AvatarAnimation = p.decode().map_err(decode)?;
+                self.diagnostics.self_animations(&m);
+            }
+        } else if p.id == AlertMessage::ID {
+            let m: AlertMessage = p.decode().map_err(decode)?;
+            self.emit(Event::Notice(field_str(&m.alert_data.message)))?;
+        } else if p.id == AgentAlertMessage::ID {
+            let m: AgentAlertMessage = p.decode().map_err(decode)?;
+            if m.agent_data.agent_id == self.login.agent_id {
+                self.emit(Event::Notice(field_str(&m.alert_data.message)))?;
             }
         } else if p.id == CoarseLocationUpdate::ID {
             let m: CoarseLocationUpdate = p.decode().map_err(decode)?;
@@ -322,6 +369,9 @@ impl Session {
     }
 
     fn command(&mut self, command: Command) -> Result<bool, Error> {
+        if matches!(command, Command::Diagnostics) {
+            return self.emit(Event::Diagnostics(self.diagnostic_report())).map(|()| false);
+        }
         if matches!(command, Command::Logout) {
             let mut m = LogoutRequest::default();
             m.agent_data.agent_id = self.login.agent_id;
@@ -363,6 +413,7 @@ impl Session {
                         m.chat_data.channel = channel;
                         let seq = self.send(&m, true);
                         if channel != 0 {
+                            self.diagnostics.channel_sent();
                             self.sent.insert(seq, Sent::Channel(channel, part.to_owned()));
                         }
                     }
@@ -393,9 +444,33 @@ impl Session {
                     }
                 }
             }
-            Command::Logout => unreachable!(),
+            Command::Diagnostics | Command::Logout => unreachable!(),
         }
         Ok(false)
+    }
+
+    fn acknowledged(&mut self) -> Result<(), Error> {
+        let acknowledged: Vec<_> = self.sent.keys().filter(|seq| !self.circuit.is_unacked(**seq)).copied().collect();
+        for seq in acknowledged {
+            if let Some(sent) = self.sent.remove(&seq) {
+                let sender = self.login.agent_id;
+                let from = format!("{} {}", self.login.first_name, self.login.last_name);
+                match sent {
+                    Sent::Group(id, text) => self.emit(Event::Group {
+                        id,
+                        sender: Some(sender),
+                        from,
+                        text,
+                    })?,
+                    Sent::Direct(id, text) => self.emit(Event::Direct { id, sender, from, text })?,
+                    Sent::Channel(channel, text) => {
+                        self.diagnostics.channel_acknowledged();
+                        self.emit(Event::Notice(tr!("tui-channel-sent", channel = channel, text = text)))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn close_group(&mut self, id: Uuid) -> Result<(), Error> {
@@ -535,6 +610,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
         muted: HashSet::new(),
         sent: BTreeMap::new(),
         people: people::People::default(),
+        diagnostics: diagnostics::State::default(),
         position: Vec3::ZERO,
         arrived: false,
         logged_out: false,
@@ -584,9 +660,11 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
             received = s.socket.recv_from(&mut buffer) => {
                 let Some((range, from)) = received? else { continue; };
                 if from != addr { continue; }
+                s.diagnostics.datagram_received();
                 let p = match parse_packet(&buffer[range]) {
                     Ok(packet) => packet,
                     Err(error) => {
+                        s.stats.decode_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         log::warn!("chat: malformed UDP packet: {error}");
                         continue;
                     }
@@ -694,18 +772,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                     request.agent_data.session_id = s.login.session_id;
                     s.send(&request, true);
                 }
-                let acknowledged: Vec<_> = s.sent.keys().filter(|seq| !s.circuit.is_unacked(**seq)).copied().collect();
-                for seq in acknowledged {
-                    if let Some(sent) = s.sent.remove(&seq) {
-                        let sender = s.login.agent_id;
-                        let from = format!("{} {}", s.login.first_name, s.login.last_name);
-                        match sent {
-                            Sent::Group(id, text) => s.emit(Event::Group { id, sender: Some(sender), from, text })?,
-                            Sent::Direct(id, text) => s.emit(Event::Direct { id, sender, from, text })?,
-                            Sent::Channel(channel, text) => s.emit(Event::Notice(tr!("tui-channel-sent", channel = channel, text = text)))?,
-                        }
-                    }
-                }
+                s.acknowledged()?;
                 s.expire_nearby()?;
                 if logout.is_none() && announced && !s.people.lookup_active && s.circuit.unacked_count() < MAX_PENDING - 8 {
                     let ids = s.people.name_batch();
@@ -814,6 +881,7 @@ mod tests {
             muted: HashSet::new(),
             sent: BTreeMap::new(),
             people: people::People::default(),
+            diagnostics: diagnostics::State::default(),
             position: Vec3::ZERO,
             arrived: false,
             logged_out: true,
@@ -1086,10 +1154,10 @@ mod tests {
         message.message_block.from_agent_name = str_field("Example Resident");
         message.message_block.message = str_field("hello");
         message.message_block.offline = 1;
-        for dialog in [4, 19, 38, 40] {
+        for dialog in [4, 38, 40] {
             message.message_block.dialog = dialog;
             session.received(&incoming(&message)).unwrap();
-            assert!(events.try_recv().is_err(), "ignore offers, object IMs and unsupported dialogs");
+            assert!(events.try_recv().is_err(), "ignore offers and unsupported dialogs");
         }
         message.message_block.dialog = 0;
         session.received(&incoming(&message)).unwrap();
@@ -1098,6 +1166,218 @@ mod tests {
         message.message_block.to_agent_id = Uuid::nil();
         session.received(&incoming(&message)).unwrap();
         assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_script_channel_ack_and_object_im_reply_are_independent() {
+        let (mut session, mut events, simulator) = fixture().await;
+        session
+            .command(Command::Local {
+                text: "roll".into(),
+                kind: 1,
+                channel: 3,
+            })
+            .unwrap();
+        let sent = packet(&simulator).await;
+        let chat = sent.decode::<ChatFromViewer>().unwrap();
+        assert_eq!(chat.chat_data.channel, 3);
+        assert_eq!(field_str(&chat.chat_data.message), "roll");
+        assert!(events.try_recv().is_err());
+        assert!(
+            session
+                .diagnostic_report()
+                .iter()
+                .any(|line| line == "script_channel_packets_sent=1 acknowledged=0")
+        );
+        let mut ack = PacketAck::default();
+        ack.packets.push(packet_ack::Packets { id: sent.sequence });
+        session.received(&incoming(&ack)).unwrap();
+        session.acknowledged().unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-channel-sent", channel = 3, text = "roll")));
+        assert!(
+            session
+                .diagnostic_report()
+                .iter()
+                .any(|line| line == "script_channel_packets_sent=1 acknowledged=1")
+        );
+
+        let mut reply = ImprovedInstantMessage::default();
+        reply.agent_data.agent_id = session.login.agent_id;
+        reply.message_block.to_agent_id = session.login.agent_id;
+        reply.message_block.id = Uuid::from_u128(42);
+        reply.message_block.dialog = 19;
+        reply.message_block.from_agent_name = str_field("Example HUD");
+        reply.message_block.message = str_field("rolled 20");
+        session.received(&incoming(&reply)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Local { sender: None, from, text }) if from == "Example HUD" && text == "rolled 20"));
+        assert!(events.try_recv().is_err());
+        assert!(
+            session.people.name_batch().is_empty(),
+            "never label the owner with an object's name"
+        );
+        assert!(session.diagnostic_report().iter().any(|line| line == "received_im_dialogs: 19=1"));
+    }
+
+    #[tokio::test]
+    async fn chat_object_ims_and_script_alerts_keep_object_names_including_offline_messages() {
+        let (mut session, mut events, _) = fixture().await;
+        let mut message = ImprovedInstantMessage::default();
+        message.agent_data.agent_id = Uuid::nil();
+        message.message_block.to_agent_id = session.login.agent_id;
+        message.message_block.from_agent_name = str_field("HUD");
+        message.message_block.message = str_field("incoming event");
+        for dialog in [19, 31] {
+            for offline in [0, 1] {
+                message.message_block.dialog = dialog;
+                message.message_block.offline = offline;
+                session.received(&incoming(&message)).unwrap();
+                assert!(
+                    matches!(events.try_recv(), Ok(Event::Local { sender: None, from, text }) if from == "HUD" && text == "incoming event")
+                );
+            }
+            message.message_block.to_agent_id = Uuid::from_u128(999);
+            session.received(&incoming(&message)).unwrap();
+            assert!(events.try_recv().is_err());
+            message.message_block.to_agent_id = session.login.agent_id;
+        }
+        assert!(session.people.name_batch().is_empty());
+        assert_eq!(
+            session.circuit.unacked_count(),
+            0,
+            "object IMs must never trigger automatic replies"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_reports_script_requests_once_without_granting_permissions_or_exporting_private_data() {
+        let (mut session, mut events, _) = fixture().await;
+        let private_id = Uuid::from_u128(999);
+        let mut question = ScriptQuestion::default();
+        question.data.task_id = private_id;
+        question.data.item_id = private_id;
+        question.data.object_name = str_field("Private object name");
+        question.data.object_owner = str_field("Private owner name");
+        question.data.questions = 0x8014;
+        question.experience.experience_id = private_id;
+        for _ in 0..3 {
+            session.received(&incoming(&question)).unwrap();
+        }
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-script-permissions-unsupported")));
+        assert!(events.try_recv().is_err());
+        let mut dialog = ScriptDialog::default();
+        dialog.data.object_name = str_field("Private object name");
+        dialog.data.message = str_field("Private dialog text");
+        for _ in 0..3 {
+            session.received(&incoming(&dialog)).unwrap();
+        }
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-script-dialog-unsupported")));
+        assert!(events.try_recv().is_err());
+        session.command(Command::Diagnostics).unwrap();
+        let Event::Diagnostics(lines) = events.try_recv().unwrap() else {
+            panic!("diagnostic event")
+        };
+        let report = lines.join("\n");
+        assert!(report.contains("script_questions=3 permission_bits_seen=0x00008014 experience_questions=3 answers_sent=0"));
+        assert!(report.contains("script_dialogs=3 replies_sent=0"));
+        for private in [
+            "Private",
+            private_id.to_string().as_str(),
+            session.login.agent_id.to_string().as_str(),
+        ] {
+            assert!(!report.contains(private));
+        }
+        assert_eq!(session.circuit.unacked_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_script_questions_from_older_simulators_do_not_require_experience_data() {
+        let (mut session, mut events, _) = fixture().await;
+        let mut question = ScriptQuestion::default();
+        question.data.questions = 0x10;
+        let mut packet = incoming(&question);
+        packet.body.truncate(packet.body.len() - 16);
+        session.received(&packet).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(_))));
+        assert!(
+            session
+                .diagnostic_report()
+                .iter()
+                .any(|line| line.contains("script_questions=1 permission_bits_seen=0x00000010 experience_questions=0 answers_sent=0"))
+        );
+        assert_eq!(session.circuit.unacked_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_displays_simulator_alerts_without_turning_them_into_direct_messages() {
+        let (mut session, mut events, _) = fixture().await;
+        let mut alert = AlertMessage::default();
+        alert.alert_data.message = str_field("Example simulator alert");
+        session.received(&incoming(&alert)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == "Example simulator alert"));
+        let mut targeted = AgentAlertMessage::default();
+        targeted.alert_data.message = str_field("Example agent alert");
+        session.received(&incoming(&targeted)).unwrap();
+        assert!(events.try_recv().is_err());
+        targeted.agent_data.agent_id = session.login.agent_id;
+        session.received(&incoming(&targeted)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == "Example agent alert"));
+        let mut message = ImprovedInstantMessage::default();
+        message.message_block.dialog = 1;
+        message.message_block.to_agent_id = session.login.agent_id;
+        message.message_block.message = str_field("Example message box");
+        session.received(&incoming(&message)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == "Example message box"));
+        assert!(events.try_recv().is_err());
+        assert!(session.people.name_batch().is_empty());
+        assert_eq!(session.circuit.unacked_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_diagnostics_observe_only_our_animation_state_and_script_control_counts() {
+        let (mut session, mut events, _) = fixture().await;
+        let mut animation = AvatarAnimation::default();
+        animation.sender.id = Uuid::from_u128(999);
+        animation.animation_list.push(avatar_animation::AnimationList {
+            anim_id: Uuid::from_u128(0x3da1d753_028a_5446_24f3_9c9b856d9422),
+            anim_sequence_id: 1,
+        });
+        session.received(&incoming(&animation)).unwrap();
+        assert!(
+            session
+                .diagnostic_report()
+                .iter()
+                .any(|line| line.contains("self_animation_packets=0"))
+        );
+        let mut foreign = incoming(&animation);
+        foreign.body.truncate(16);
+        foreign.body.extend_from_slice(&[255, 1]);
+        session.received(&foreign).unwrap();
+        animation.sender.id = session.login.agent_id;
+        session.received(&incoming(&animation)).unwrap();
+        let mut controls = ScriptControlChange::default();
+        controls.data = vec![
+            script_control_change::Data {
+                take_controls: true,
+                controls: 1,
+                pass_to_agent: true,
+            },
+            script_control_change::Data {
+                take_controls: false,
+                controls: 1,
+                pass_to_agent: false,
+            },
+        ];
+        session.received(&incoming(&controls)).unwrap();
+        let report = session.diagnostic_report().join("\n");
+        assert!(report.contains("self_animation_packets=1 latest_animations=1"));
+        assert!(report.contains("self_transition_states=standup"));
+        assert!(report.contains("script_control_packets=1 take_blocks=1 release_blocks=1"));
+        assert!(events.try_recv().is_err(), "observing animation and controls must not flood chat");
+        assert_eq!(
+            session.circuit.unacked_count(),
+            0,
+            "diagnostics never change avatar animations or permissions"
+        );
     }
 
     #[tokio::test]

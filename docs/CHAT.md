@@ -74,6 +74,7 @@ cargo install --path crates/aurora-chat --locked --debug
 | Left / Right / Home / End / Backspace / Delete | Edit UTF-8 input |
 | Ctrl-U | Clear input |
 | `/help` | Command reference |
+| `/diagnostics` | Show a sanitized, in-memory protocol snapshot; never sends chat |
 | `/quit`, Ctrl-C or Esc | Request logout, wait for confirmation, restore terminal |
 
 Recipients can be a UUID, a 1-based number from `/friends`, or an exact full
@@ -128,6 +129,63 @@ that confirms transport, **not delivery to every participant**. Local messages
 are displayed when echoed by the simulator. Failed acknowledgments and lost
 event queues are reported explicitly rather than pretending delivery succeeded.
 
+Object instant messages (`llInstantMessage`, protocol dialog 19) and script
+alerts appear in Local under the object's name, including queued offline object
+IMs. They do not open a direct chat to the object's owner or overwrite the
+owner's resident name.
+
+### Troubleshooting worn HUDs and animations
+
+Scripts execute on the simulator, not in this terminal. A missing HUD response
+can mean that the client did not display a message, not that the script stopped.
+The client now displays object IMs as well as ordinary object chat. However,
+script dialogs/text boxes and permission prompts are **not implemented**:
+the first of each received in a session produces a notice, and no response or
+permission grant is sent. No HUD touches, keyboard controls, local animation
+playback, AO engine or animation-completion signaling are implemented either.
+An AO or HUD that needs those viewer features may still fail.
+
+Use `/diagnostics` for a targeted report during **your own** login:
+
+1. Switch to `/local`, run `/diagnostics`, and retain the counter lines.
+2. Try `/3 roll` once, wait a few seconds, then run `/diagnostics` again.
+3. If applicable, have another participant trigger one incoming HUD event and
+   take another snapshot.
+4. Copy just the lines from `aurora_chat=... diagnostics=1` through the final
+   `received_local_chat_types:` line, not the surrounding conversation. Widen
+   the terminal or use PageUp to reach earlier rows.
+
+The report contains numeric counters and fixed protocol/state labels, never
+account/session IDs, credentials, names, chat/dialog contents, script or
+animation asset IDs, region names, positions, simulator addresses or capability
+URLs. It is generated in memory on demand, sends nothing to the grid and
+writes no file. Counters reset on reconnect. Labels stay in a stable,
+machine-readable form in every UI language.
+
+- `script_channel_packets_sent` counts nonzero-channel UDP messages handed to
+  the reliable transport; `acknowledged` counts simulator acknowledgments.
+  Neither proves a script heard or executed the command.
+- `received_im_dialogs: 19=...` counts object IMs, `31=...` object alerts,
+  `0=...` resident IMs and `17=...` group messages.
+- `received_local_chat_types` counts `ChatFromSimulator` packets by type,
+  including OwnerSay (`8`). `local_chat_filtered` counts inaudible/typing
+  messages excluded from the transcript.
+- `script_questions` and `permission_bits_seen` identify unanswered permission
+  requests without identifying their scripts. `script_dialogs` counts
+  unanswered dialog/text-box requests.
+- `self_animation_packets`, `latest_animations`, `latest_sources` and
+  `last_update_age_seconds` describe the latest animation state received for
+  your avatar only. `self_transition_states` names only built-in `standup`,
+  `prejump`, `land` and `medium_land` states that ordinarily wait for viewer
+  animation completion; it never exposes arbitrary asset IDs. No animation
+  packet yet is different from a received packet with zero animations.
+
+This is preferable to sharing a full viewer log or packet capture. In the
+graphical Aurora Viewer, use Dev Toolbox **J7** (Script errors) to check script
+errors yourself; share only an intentionally selected, non-private error if
+needed. J7 does not reveal what the terminal received, so start with the
+terminal's report for this problem.
+
 ## Resource model and intentional limits
 
 - One Tokio runtime worker, event-driven terminal redraw, no frame loop or GPU.
@@ -151,6 +209,9 @@ event queues are reported explicitly rather than pretending delivery succeeded.
   discarded **without decoding or retaining world objects**.
 - No textures, meshes, inventory, appearance/outfit requests or cache files.
   Your avatar remains at the login location; its appearance is not managed.
+- Diagnostics retain only bounded counters and known built-in transition
+  labels. Self-animation and script-control packets are decoded only for these
+  counters, without fetching or playing animations.
 - No movement, teleport/crossing support, friendship offer/rights management,
   group administration, mute-list management, chat persistence, saved
   accounts, updater or media. Unsupported offers are not automatically accepted.
@@ -173,9 +234,9 @@ measurable CPU ticks during a 30-second idle sample. Before excluding the graphi
 translation catalogs it used about 48 MiB. These are offline process
 measurements, not a live-session memory or bandwidth guarantee.
 
-After adding channels, friends, DMs, radar, display names and SLT timestamps, a
-Linux pseudo-terminal demo run with Local, group and direct chat used
-**8932 KiB (about 8.7 MiB) resident memory**, two OS threads, no IP sockets and
+After adding channels, friends, DMs, radar, display names, SLT timestamps and HUD
+diagnostics, a Linux pseudo-terminal demo run with Local, group and direct chat used
+**9024 KiB (about 8.8 MiB) resident memory**, two OS threads, no IP sockets and
 zero CPU ticks in a 30-second idle sample. The demo remains entirely offline.
 
 ## Validation
@@ -183,15 +244,17 @@ zero CPU ticks in a 30-second idle sample. The demo remains entirely offline.
 Automated tests cover UTF-8 input and bounds, terminal-control sanitization,
 masked login, tiny terminal sizes, wrapping, unread/draft state, commands,
 membership/session gating, channel/DM wire fields, friend presence, late name
-resolution, bounded People API responses, radar scaling/expiry and chat-only throttles. Shared
-login, TLS, reliable-circuit and event-queue tests remain applicable.
+resolution, bounded People API responses, radar scaling/expiry, object IMs,
+script-request visibility, diagnostic privacy/bounds and chat-only throttles.
+Shared login, TLS, reliable-circuit and event-queue tests remain applicable.
 
-The standalone build, strict chat clippy check and 233 selected workspace tests
-pass with SLT timestamps, including winter, summer and both daylight-saving
-transitions. A pseudo-terminal test confirms SLT output with UTC, Tokyo and
-Los Angeles host timezones. The earlier default-viewer-network clippy check
-and nine full-catalog integration tests passed after the social additions. The
-licence inventory was regenerated without changes.
+The standalone build, strict lean-workspace and combined viewer/chat-network
+clippy checks, 242 selected workspace tests and nine full-catalog integration
+tests pass. Timestamp tests include winter, summer and both daylight-saving
+transitions; a pseudo-terminal test confirmed SLT output with UTC, Tokyo and
+Los Angeles host timezones. English, French and Japanese terminal checks confirm
+object-message display and `/diagnostics` in Local and direct buffers. The HUD
+follow-up changes no dependencies or licence notices.
 A pseudo-terminal check verifies actual Local/group/direct output, channel
 isolation, friends, radar, full-name recipients, switching, bracketed paste,
 resizing, quitting and restoration of terminal modes.
