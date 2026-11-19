@@ -68,6 +68,12 @@ pub fn clean(text: &str) -> String {
         .collect()
 }
 
+fn slt_timestamp(now: chrono::DateTime<chrono::Utc>) -> String {
+    now.with_timezone(&chrono_tz::America::Los_Angeles)
+        .format("%Y/%m/%d %H:%M")
+        .to_string()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chat {
     Local,
@@ -168,7 +174,7 @@ impl Model {
 
     fn notice_to(&mut self, index: usize, text: &str) {
         self.buffers[index].push(Entry {
-            timestamp: chrono::Local::now().format("%Y/%m/%d %H:%M").to_string(),
+            timestamp: slt_timestamp(chrono::Utc::now()),
             sender: None,
             from: String::new(),
             text: clean(text),
@@ -251,11 +257,12 @@ impl Model {
 
     fn append(&mut self, index: usize, sender: Option<Uuid>, from: &str, text: &str) {
         // Split remote paragraphs into bounded rows; never retain an unbounded line.
+        let timestamp = slt_timestamp(chrono::Utc::now());
         for line in text.lines().take(MAX_LINES) {
             let from = clean(from);
             let text = clean(line);
             self.buffers[index].push(Entry {
-                timestamp: chrono::Local::now().format("%Y/%m/%d %H:%M").to_string(),
+                timestamp: timestamp.clone(),
                 sender,
                 from,
                 text,
@@ -592,6 +599,43 @@ mod tests {
     fn submit(model: &mut Model, line: &str) -> Action {
         model.active_mut().draft.insert(line);
         model.submit()
+    }
+
+    #[test]
+    fn slt_timestamps_follow_pacific_daylight_saving_transitions() {
+        let cases = [
+            ("2026-01-15T20:30:00Z", "2026/01/15 12:30"),
+            ("2026-07-15T20:30:00Z", "2026/07/15 13:30"),
+            ("2026-03-08T09:59:00Z", "2026/03/08 01:59"),
+            ("2026-03-08T10:00:00Z", "2026/03/08 03:00"),
+            ("2026-11-01T08:59:00Z", "2026/11/01 01:59"),
+            ("2026-11-01T09:00:00Z", "2026/11/01 01:00"),
+            ("2026-01-01T02:00:00Z", "2025/12/31 18:00"),
+        ];
+        for (utc, expected) in cases {
+            let instant = chrono::DateTime::parse_from_rfc3339(utc).unwrap().to_utc();
+            assert_eq!(slt_timestamp(instant), expected, "{utc}");
+        }
+    }
+
+    #[test]
+    fn notices_and_all_message_lines_use_slt_receipt_time() {
+        let mut model = Model::default();
+        let before = slt_timestamp(chrono::Utc::now());
+        model.notice("notice");
+        model.append(0, None, "Resident", "first\nsecond");
+        let after = slt_timestamp(chrono::Utc::now());
+        let entries = &model.active().lines;
+        assert_eq!(entries.len(), 3);
+        for entry in entries {
+            assert!(entry.timestamp == before || entry.timestamp == after);
+        }
+        assert_eq!(entries[1].timestamp, entries[2].timestamp);
+        assert_eq!(model.format_entry(&entries[0]), format!("[{}] * notice", entries[0].timestamp));
+        assert_eq!(
+            model.format_entry(&entries[1]),
+            format!("[{}] Resident: first", entries[1].timestamp)
+        );
     }
 
     #[test]

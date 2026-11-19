@@ -11,6 +11,7 @@ aurora-i18n = { path = "../aurora-i18n", default-features = false }
 aurora-net = { path = "../aurora-net", default-features = false, features = ["chat"] }
 aurora-version = { path = "../aurora-version" }
 chrono = "0.4.45"
+chrono-tz = "0.10.4"
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Pin while using its opt-in wrapped-line counting API for transcript scrolling.

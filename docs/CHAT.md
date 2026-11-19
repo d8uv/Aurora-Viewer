@@ -93,9 +93,11 @@ it is not a public Local echo or confirmation that a HUD script ran.
 Unlike the Legacy Viewer's repeat-channel shortcut, `//text` deliberately
 keeps this client's original meaning: send literal `/text` to the active chat.
 
-Messages use `[YYYY/MM/DD HH:MM] Display (Legacy): text`, with the machine's
-local timezone and receipt time. `/me` is retained literally, as in SL chat
-logs. Identical names are shown once; legacy names or UUIDs remain usable
+Messages and notices use receipt time from the machine's clock in Second Life
+Time (SLT, `America/Los_Angeles`, including daylight-saving changes),
+regardless of its local timezone. Messages use
+`[YYYY/MM/DD HH:MM] Display (Legacy): text`. `/me` is retained literally, as
+in SL chat logs. Identical names are shown once; legacy names or UUIDs remain usable
 until the People API responds. Late lookups also resolve retained history,
 DM titles, friend lists and radar. Scripted objects keep their object names.
 This is in-memory formatting, not disk logging.
@@ -171,9 +173,9 @@ measurable CPU ticks during a 30-second idle sample. Before excluding the graphi
 translation catalogs it used about 48 MiB. These are offline process
 measurements, not a live-session memory or bandwidth guarantee.
 
-After adding channels, friends, DMs, radar and timestamped display names, a
+After adding channels, friends, DMs, radar, display names and SLT timestamps, a
 Linux pseudo-terminal demo run with Local, group and direct chat used
-**7240 KiB (about 7.1 MiB) resident memory**, two OS threads, no IP sockets and
+**8932 KiB (about 8.7 MiB) resident memory**, two OS threads, no IP sockets and
 zero CPU ticks in a 30-second idle sample. The demo remains entirely offline.
 
 ## Validation
@@ -184,9 +186,12 @@ membership/session gating, channel/DM wire fields, friend presence, late name
 resolution, bounded People API responses, radar scaling/expiry and chat-only throttles. Shared
 login, TLS, reliable-circuit and event-queue tests remain applicable.
 
-The standalone build, strict chat/default-viewer-network clippy checks,
-231 selected workspace tests and nine full-catalog integration tests pass after
-these additions. The licence inventory was regenerated without changes.
+The standalone build, strict chat clippy check and 233 selected workspace tests
+pass with SLT timestamps, including winter, summer and both daylight-saving
+transitions. A pseudo-terminal test confirms SLT output with UTC, Tokyo and
+Los Angeles host timezones. The earlier default-viewer-network clippy check
+and nine full-catalog integration tests passed after the social additions. The
+licence inventory was regenerated without changes.
 A pseudo-terminal check verifies actual Local/group/direct output, channel
 isolation, friends, radar, full-name recipients, switching, bracketed paste,
 resizing, quitting and restoration of terminal modes.
@@ -214,8 +219,9 @@ still need fresh live validation:
    outgoing DMs, including an offline friend; test reply drafts, unread counts,
    `/part`, and a queued IM delivered at login.
 7. Check Local/group/DM senders with display names different from legacy names,
-   including Unicode, your own name and a scripted object. Confirm timestamp
-   timezone and `[timestamp] Display (Legacy): /me ...` formatting.
+   including Unicode, your own name and a scripted object. Confirm SLT
+   timestamps and `[timestamp] Display (Legacy): /me ...` formatting, including
+   when the machine is set to a different timezone.
 8. Confirm `/part` does not remove group membership; ignored IM/asset offers
    are not accepted; no avatar movement or unexpected asset requests occur.
 9. Leave the client idle for at least 30 minutes. Test disconnection and
