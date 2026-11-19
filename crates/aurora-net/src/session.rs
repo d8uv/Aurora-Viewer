@@ -5926,11 +5926,7 @@ fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option
 /// the viewer scales them back (LLViewerRegion::updateCoarseLocations, there
 /// with the width on both axes). Z is in steps of 4 m.
 fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
-    Vec3::new(
-        f32::from(x) * size.0 as f32 / 256.0,
-        f32::from(y) * size.1 as f32 / 256.0,
-        f32::from(z) * 4.0,
-    )
+    crate::social::coarse_position(x, y, z, size)
 }
 
 /// How long one InterestList post may take: the caps client only bounds

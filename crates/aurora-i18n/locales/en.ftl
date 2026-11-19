@@ -16027,7 +16027,7 @@ tui-backlog = Chat could not keep up with incoming traffic. The session was stop
 tui-group-limit = The server supplied more groups than this client can retain.
 tui-send-busy = Too many messages are pending. Wait for the simulator and try again.
 tui-not-member = You are not a member of that group.
-tui-session-limit = Too many open group chats. Use /part to close one.
+tui-session-limit = Too many open chats. Use /part to close one.
 tui-invalid-text = Enter a nonempty message of at most 4096 UTF-8 bytes, without control characters.
 tui-group-not-ready = Group chat is not ready, or a moderator has muted your text chat.
 tui-moderation-changed = Your group text-chat moderation status changed.
@@ -16047,6 +16047,11 @@ tui-part-local = Local chat cannot be closed.
 tui-local-command = /whisper and /shout require a message and can only be used in Local.
 tui-unknown-command = Unknown command. Use /help, or // to send a literal leading slash.
 tui-help =
+    /friends [page] — list friends and online status (100 per page)
+    /query <recipient> — open a direct chat; /msg or /im <recipient> <text> — send a direct message
+    Recipients: UUID, friend list number, or unambiguous exact full display/legacy name
+    /radar [page], /nearby [page] — nearby residents, approximate distances and normal-chat range (20 m)
+    /3 roll, /-3roll — send on a script channel, only in Local; //text always sends a literal slash
     /groups — list your groups
     /join <number or full name> — open a group chat you belong to
     /part — close this chat session, without leaving the group
@@ -16085,6 +16090,24 @@ tui-demo-you = You (offline demo)
 tui-demo = Offline demo — no network
 tui-offline = Offline
 tui-online = Online
-tui-demo-intro = Offline demo. /groups then /join 1 opens a simulated group chat. Messages are only echoed locally.
+tui-demo-intro = Offline demo. Try /groups, /join 1, /friends, /query 1 and /radar. Messages are simulated; script-channel sends show a notice, not nearby chat.
 tui-welcome = Type /help for commands. Tab switches chats. Nothing is written to disk.
 tui-quitting = Logging out…
+tui-direct-title = IM: { $name }
+tui-friends-heading = Friends (list numbers select recipients):
+tui-recipient-usage = Use /query <recipient> or /msg <recipient> <text> (/im also works). Choose a UUID, friend list number, or unambiguous exact full display/legacy name.
+tui-channel-local = Script-channel commands can only be sent from Local. Use /local first; nothing was sent.
+tui-channel-usage = Use /<channel> <text> (for example /3 roll or /-3roll). Channel must be a signed 32-bit integer, except reserved debug channel 2147483647.
+tui-radar-title = Nearby · normal chat 20 m
+tui-radar-heading = Nearby residents — approximate 3D distances; normal chat reaches 20 m:
+tui-radar-in-range = ~{ $distance } m · within 20 m
+tui-radar-outside = ~{ $distance } m · beyond 20 m
+tui-radar-unknown = distance unknown · range unknown
+tui-demo-channel-sent = Offline demo: simulated send on channel { $channel }; not a nearby broadcast.
+tui-demo-hello = Hello! Try /friends and /radar.
+tui-demo-direct = This is a simulated direct message. Use /query 1 to reply.
+tui-names-unavailable = Display names unavailable; using legacy names until the next lookup.
+tui-resident-limit = The friends list exceeds the client limit.
+tui-channel-sent = Sent on channel { $channel }: { $text }
+tui-list-page = Page { $page }/{ $pages }
+tui-list-page-usage = Use /friends [page] or /radar [page] with a valid page number. Each page contains at most 100 residents.

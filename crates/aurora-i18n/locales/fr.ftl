@@ -16033,7 +16033,7 @@ tui-backlog = Le client ne suit plus le trafic entrant. La session a été arrê
 tui-group-limit = Le serveur a envoyé plus de groupes que ce client ne peut en conserver.
 tui-send-busy = Trop de messages sont en attente. Attendez la réponse du simulateur et réessayez.
 tui-not-member = Vous n'êtes pas membre de ce groupe.
-tui-session-limit = Trop de discussions de groupe ouvertes. Fermez-en une avec /part.
+tui-session-limit = Trop de discussions ouvertes. Fermez-en une avec /part.
 tui-invalid-text = Saisissez un message non vide d'au plus 4096 octets UTF-8, sans caractère de contrôle.
 tui-group-not-ready = La discussion de groupe n'est pas prête, ou un modérateur vous a interdit d'écrire.
 tui-moderation-changed = Votre autorisation d'écrire dans le groupe a changé.
@@ -16053,6 +16053,11 @@ tui-part-local = La discussion de proximité ne peut pas être fermée.
 tui-local-command = /whisper et /shout exigent un message et ne s'utilisent qu'en Proximité.
 tui-unknown-command = Commande inconnue. Utilisez /help, ou // pour envoyer une barre oblique initiale.
 tui-help =
+    /friends [page] — amis et état de connexion (100 par page)
+    /query <destinataire> — ouvrir un IM ; /msg ou /im <destinataire> <texte> — envoyer un IM
+    Destinataire : UUID, numéro dans /friends ou nom d’affichage/historique complet et non ambigu
+    /radar [page], /nearby [page] — résidents proches, distances approximatives et portée du chat normal (20 m)
+    /3 roll, /-3roll — canal de script, uniquement dans Local ; //texte garde une barre oblique littérale
     /groups — lister vos groupes
     /join <numéro ou nom complet> — ouvrir une discussion de groupe
     /part — fermer cette discussion sans quitter le groupe
@@ -16091,6 +16096,24 @@ tui-demo-you = Vous (démo hors ligne)
 tui-demo = Démo hors ligne — aucun réseau
 tui-offline = Hors ligne
 tui-online = En ligne
-tui-demo-intro = Démo hors ligne. /groups puis /join 1 ouvre une discussion de groupe simulée. Les messages sont seulement affichés localement.
+tui-demo-intro = Démo hors ligne. Essayez /groups, /join 1, /friends, /query 1 et /radar. Messages simulés ; les canaux de script affichent un avis, pas un message de proximité.
 tui-welcome = /help affiche les commandes. Tab change de discussion. Rien n'est écrit sur disque.
 tui-quitting = Déconnexion…
+tui-direct-title = IM : { $name }
+tui-friends-heading = Amis (les numéros sélectionnent les destinataires) :
+tui-recipient-usage = Utilisez /query <destinataire> ou /msg <destinataire> <texte> (ou /im). Choisissez un UUID, un numéro dans /friends ou un nom d’affichage/historique complet et non ambigu.
+tui-channel-local = Les commandes de canal de script ne partent que de Local. Utilisez /local ; rien n’a été envoyé.
+tui-channel-usage = Utilisez /<canal> <texte> (par exemple /3 roll ou /-3roll). Le canal doit être un entier signé de 32 bits, sauf le canal de débogage réservé 2147483647.
+tui-radar-title = Proximité · chat normal 20 m
+tui-radar-heading = Résidents proches — distances 3D approximatives ; portée du chat normal : 20 m :
+tui-radar-in-range = ~{ $distance } m · dans les 20 m
+tui-radar-outside = ~{ $distance } m · au-delà de 20 m
+tui-radar-unknown = distance inconnue · portée inconnue
+tui-demo-channel-sent = Démo hors ligne : envoi simulé sur le canal { $channel } ; pas de diffusion de proximité.
+tui-demo-hello = Bonjour ! Essayez /friends et /radar.
+tui-demo-direct = Ceci est un message privé simulé. Utilisez /query 1 pour répondre.
+tui-names-unavailable = Noms d’affichage indisponibles ; les noms historiques sont utilisés jusqu’à la prochaine recherche.
+tui-resident-limit = La liste d’amis dépasse la limite du client.
+tui-channel-sent = Envoyé sur le canal { $channel } : { $text }
+tui-list-page = Page { $page }/{ $pages }
+tui-list-page-usage = Utilisez /friends [page] ou /radar [page] avec un numéro de page valide. Chaque page contient au plus 100 résidents.

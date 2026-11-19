@@ -5,6 +5,9 @@
 //! No world model, asset fetcher, inventory, appearance, neighbours or media.
 //! Task traffic cannot be disabled: the simulator also sends chat on it.
 
+mod people;
+pub use people::{Friend, MAX_RESIDENTS, Nearby, ResidentName};
+
 use crate::caps::{self, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::circuit_socket::CircuitSocket;
@@ -16,7 +19,7 @@ use aurora_llsd::{Llsd, llsd_map};
 use aurora_msg::msgs::*;
 use aurora_msg::{IncomingPacket, Msg, field_str, parse_packet, str_field};
 use glam::{Quat, Vec3};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,15 +31,16 @@ pub const MAX_GROUPS: usize = 128;
 pub const MAX_SESSIONS: usize = 64;
 pub const MAX_INPUT_BYTES: usize = 4096;
 const MAX_PENDING: usize = 128;
-const CHAT_CAPS: &[&str] = &["EventQueueGet", "ChatSessionRequest"];
-const CHAT_OPTIONS: &[&str] = &["login-flags", "max-agent-groups", "adult_compliant"];
+const CHAT_CAPS: &[&str] = &["EventQueueGet", "ChatSessionRequest", "GetDisplayNames"];
+const CHAT_OPTIONS: &[&str] = &["login-flags", "max-agent-groups", "adult_compliant", "buddy-list"];
 
 #[derive(Debug)]
 pub enum Command {
-    Local { text: String, kind: u8 },
+    Local { text: String, kind: u8, channel: i32 },
     Join(Uuid),
     Leave(Uuid),
     Group { id: Uuid, text: String },
+    Direct { id: Uuid, text: String },
     Logout,
 }
 
@@ -45,8 +49,26 @@ pub enum Event {
     Connected(String),
     Groups(Vec<GroupMembership>),
     GroupRemoved(Uuid),
-    Local { from: String, text: String },
-    Group { id: Uuid, from: String, text: String },
+    Local {
+        sender: Option<Uuid>,
+        from: String,
+        text: String,
+    },
+    Group {
+        id: Uuid,
+        sender: Option<Uuid>,
+        from: String,
+        text: String,
+    },
+    Direct {
+        id: Uuid,
+        sender: Uuid,
+        from: String,
+        text: String,
+    },
+    Names(Vec<ResidentName>),
+    Friends(Vec<Friend>),
+    Nearby(Vec<Nearby>),
     Joined(Uuid),
     Left(Uuid),
     Notice(String),
@@ -75,10 +97,17 @@ struct Session {
     joining: HashMap<Uuid, Instant>,
     left: HashSet<Uuid>,
     muted: HashSet<Uuid>,
-    sent: HashMap<u32, (Uuid, String)>,
+    sent: BTreeMap<u32, Sent>,
+    people: people::People,
     position: Vec3,
     arrived: bool,
     logged_out: bool,
+}
+
+enum Sent {
+    Group(Uuid, String),
+    Direct(Uuid, String),
+    Channel(i32, String),
 }
 
 impl Session {
@@ -98,6 +127,15 @@ impl Session {
         b.to_agent_id = id;
         b.id = id;
         b.dialog = dialog;
+        if dialog == 0 {
+            // LLIMMgr::computeSessionID / deliver_message (llimview.cpp).
+            b.id = if id == self.login.agent_id {
+                id
+            } else {
+                Uuid::from_u128(id.as_u128() ^ self.login.agent_id.as_u128())
+            };
+            b.offline = u8::from(self.people.offline_friend(id));
+        }
         b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
         b.message = str_field(text);
         b.binary_bucket = vec![0];
@@ -208,8 +246,15 @@ impl Session {
             let m: ChatFromSimulator = p.decode().map_err(decode)?;
             let c = m.chat_data;
             if c.audible == 1 && !matches!(c.chat_type, 4 | 5) {
+                // CHAT_SOURCE_AGENT only: a scripted object must keep its own name.
+                let sender = (c.source_type == 1 && !c.source_id.is_nil()).then_some(c.source_id);
+                let from = field_str(&c.from_name);
+                if let Some(id) = sender {
+                    self.observe_name(id, &from)?;
+                }
                 self.emit(Event::Local {
-                    from: field_str(&c.from_name),
+                    sender,
+                    from,
                     text: field_str(&c.message),
                 })?;
             }
@@ -225,16 +270,43 @@ impl Session {
         } else if p.id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = p.decode().map_err(decode)?;
             let b = m.message_block;
-            if b.dialog == 17
-                && (self.joined.contains(&b.id) || self.joining.contains_key(&b.id))
-                && m.agent_data.agent_id != self.login.agent_id
-            {
+            let sender = m.agent_data.agent_id;
+            let from = field_str(&b.from_agent_name);
+            if b.dialog == 17 && (self.joined.contains(&b.id) || self.joining.contains_key(&b.id)) && sender != self.login.agent_id {
+                self.observe_name(sender, &from)?;
                 self.emit(Event::Group {
                     id: b.id,
-                    from: field_str(&b.from_agent_name),
+                    sender: Some(sender),
+                    from,
+                    text: field_str(&b.message),
+                })?;
+            } else if b.dialog == 0 && !sender.is_nil() && b.to_agent_id == self.login.agent_id {
+                self.observe_name(sender, &from)?;
+                self.emit(Event::Direct {
+                    id: sender,
+                    sender,
+                    from,
                     text: field_str(&b.message),
                 })?;
             }
+        } else if p.id == CoarseLocationUpdate::ID {
+            let m: CoarseLocationUpdate = p.decode().map_err(decode)?;
+            self.coarse_locations(&m)?;
+        } else if p.id == UUIDNameReply::ID {
+            let m: UUIDNameReply = p.decode().map_err(decode)?;
+            for b in m.uuid_name_block {
+                self.legacy_name(b.id, &format!("{} {}", field_str(&b.first_name), field_str(&b.last_name)))?;
+            }
+        } else if p.id == OnlineNotification::ID {
+            let m: OnlineNotification = p.decode().map_err(decode)?;
+            self.friend_presence(m.agent_block.iter().map(|b| b.agent_id), true)?;
+        } else if p.id == OfflineNotification::ID {
+            let m: OfflineNotification = p.decode().map_err(decode)?;
+            self.friend_presence(m.agent_block.iter().map(|b| b.agent_id), false)?;
+        } else if p.id == TerminateFriendship::ID {
+            let m: TerminateFriendship = p.decode().map_err(decode)?;
+            self.people.friends.remove(&m.ex_block.other_id);
+            self.emit_friends()?;
         } else if p.id == KickUser::ID {
             let m: KickUser = p.decode().map_err(decode)?;
             return Err(Error::Session(field_str(&m.user_info.reason)));
@@ -280,16 +352,19 @@ impl Session {
                 self.im(id, 18, "");
                 self.close_group(id)?;
             }
-            Command::Local { text, kind } => {
-                if valid_text(&text) && matches!(kind, 0..=2) {
+            Command::Local { text, kind, channel } => {
+                if valid_text(&text) && matches!(kind, 0..=2) && channel != i32::MAX {
                     for part in crate::message_split::message_parts(&text) {
                         let mut m = ChatFromViewer::default();
                         m.agent_data.agent_id = self.login.agent_id;
                         m.agent_data.session_id = self.login.session_id;
                         m.chat_data.message = str_field(part);
                         m.chat_data.type_ = kind;
-                        m.chat_data.channel = 0;
-                        self.send(&m, true);
+                        m.chat_data.channel = channel;
+                        let seq = self.send(&m, true);
+                        if channel != 0 {
+                            self.sent.insert(seq, Sent::Channel(channel, part.to_owned()));
+                        }
                     }
                 } else {
                     self.emit(Event::Notice(tr!("tui-invalid-text").into()))?;
@@ -301,10 +376,21 @@ impl Session {
                 } else if valid_text(&text) {
                     for part in crate::message_split::message_parts(&text) {
                         let seq = self.im(id, 17, part);
-                        self.sent.insert(seq, (id, part.to_owned()));
+                        self.sent.insert(seq, Sent::Group(id, part.to_owned()));
                     }
                 } else {
                     self.emit(Event::Notice(tr!("tui-invalid-text").into()))?;
+                }
+            }
+            Command::Direct { id, text } => {
+                if id.is_nil() || !valid_text(&text) {
+                    self.emit(Event::Notice(tr!("tui-invalid-text").into()))?;
+                } else {
+                    self.observe_name(id, "")?;
+                    for part in crate::message_split::message_parts(&text) {
+                        let seq = self.im(id, 0, part);
+                        self.sent.insert(seq, Sent::Direct(id, part.to_owned()));
+                    }
                 }
             }
             Command::Logout => unreachable!(),
@@ -316,7 +402,7 @@ impl Session {
         self.joined.remove(&id);
         self.joining.remove(&id);
         self.muted.remove(&id);
-        self.sent.retain(|_, (group, _)| *group != id);
+        self.sent.retain(|_, sent| !matches!(sent, Sent::Group(group, _) if *group == id));
         if self.groups.contains_key(&id) {
             self.left.insert(id);
         }
@@ -325,6 +411,8 @@ impl Session {
 
     fn event(&mut self, message: &str, body: &Llsd) -> Result<(), Error> {
         match message {
+            "DisplayNameUpdate" => self.display_name(social::AvatarNameData::from_llsd(&body["agent"]))?,
+            "CoarseLocationUpdate" => self.coarse_event(body)?,
             "AgentGroupDataUpdate" => self.remember_groups(social::parse_group_data(body))?,
             "AgentDropGroup" => {
                 let id = body["AgentData"][0]["GroupID"].as_uuid();
@@ -393,8 +481,13 @@ fn valid_text(text: &str) -> bool {
 
 enum Job {
     QueueEnded,
+    Names {
+        ids: Vec<Uuid>,
+        result: Result<Vec<social::AvatarNameData>, caps::CapsError>,
+    },
     Accepted {
         id: Uuid,
+        sender: Uuid,
         from: String,
         text: String,
         result: Result<Llsd, caps::CapsError>,
@@ -440,11 +533,15 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
         joining: HashMap::new(),
         left: HashSet::new(),
         muted: HashSet::new(),
-        sent: HashMap::new(),
+        sent: BTreeMap::new(),
+        people: people::People::default(),
         position: Vec3::ZERO,
         arrived: false,
         logged_out: false,
     };
+    s.load_friends()?;
+    s.login.raw = Llsd::Undef;
+    s.observe_name(s.login.agent_id, &format!("{} {}", s.login.first_name, s.login.last_name))?;
     let seed = caps::resolve_seed_names(&http, &seed_url, CHAT_CAPS, caps::SeedRetry::FIRESTORM, || true);
     tokio::pin!(seed);
     let mut capabilities = None;
@@ -527,7 +624,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                                 jobs.spawn(async move {
                                     let body = llsd_map! { "method" => "accept invitation", "session-id" => id };
                                     let result = caps::post_llsd(&http, &url, &body).await;
-                                    Job::Accepted { id, from: inv.from_name, text: inv.message, result }
+                                    Job::Accepted { id, sender: inv.from, from: inv.from_name, text: inv.message, result }
                                 });
                             }
                         }
@@ -538,13 +635,36 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
             Some(result) = jobs.join_next(), if !jobs.is_empty() => {
                 match result.map_err(|e| Error::Session(e.to_string()))? {
                     Job::QueueEnded => return Err(Error::Session(tr!("tui-queue-lost").into())),
-                    Job::Accepted { id, from, text, result } => {
+                    Job::Names { ids, result } => {
+                        s.people.lookup_active = false;
+                        match result {
+                            Ok(names) => {
+                                let missing: Vec<_> = ids.iter().copied().filter(|id| !names.iter().any(|name| name.id == *id)).collect();
+                                for name in names {
+                                    s.display_name(name)?;
+                                }
+                                if !missing.is_empty() {
+                                    s.legacy_lookup(&missing);
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("chat: display-name lookup failed: {error}");
+                                if !s.people.warned {
+                                    s.emit(Event::Notice(tr!("tui-names-unavailable").into()))?;
+                                    s.people.warned = true;
+                                }
+                                s.legacy_lookup(&ids);
+                            }
+                        }
+                    }
+                    Job::Accepted { id, sender, from, text, result } => {
                         if s.joining.remove(&id).is_some() && !s.left.contains(&id) && s.groups.contains_key(&id) {
                             match result {
                                 Ok(_) => {
                                     s.joined.insert(id);
                                     s.emit(Event::Joined(id))?;
-                                    s.emit(Event::Group { id, from, text })?;
+                                    s.observe_name(sender, &from)?;
+                                    s.emit(Event::Group { id, sender: Some(sender), from, text })?;
                                 }
                                 Err(e) => s.emit(Event::Notice(tr!("tui-join-failed", reason = e.to_string())))?,
                             }
@@ -568,11 +688,42 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                 if !announced && s.arrived && capabilities.is_some() {
                     announced = true;
                     s.emit(Event::Connected(format!("{} {}", s.login.first_name, s.login.last_name)))?;
+                    // LLStartUp's offline IM retrieval; never accept asset offers.
+                    let mut request = RetrieveInstantMessages::default();
+                    request.agent_data.agent_id = s.login.agent_id;
+                    request.agent_data.session_id = s.login.session_id;
+                    s.send(&request, true);
                 }
                 let acknowledged: Vec<_> = s.sent.keys().filter(|seq| !s.circuit.is_unacked(**seq)).copied().collect();
                 for seq in acknowledged {
-                    if let Some((id, text)) = s.sent.remove(&seq) {
-                        s.emit(Event::Group { id, from: format!("{} {}", s.login.first_name, s.login.last_name), text })?;
+                    if let Some(sent) = s.sent.remove(&seq) {
+                        let sender = s.login.agent_id;
+                        let from = format!("{} {}", s.login.first_name, s.login.last_name);
+                        match sent {
+                            Sent::Group(id, text) => s.emit(Event::Group { id, sender: Some(sender), from, text })?,
+                            Sent::Direct(id, text) => s.emit(Event::Direct { id, sender, from, text })?,
+                            Sent::Channel(channel, text) => s.emit(Event::Notice(tr!("tui-channel-sent", channel = channel, text = text)))?,
+                        }
+                    }
+                }
+                s.expire_nearby()?;
+                if logout.is_none() && announced && !s.people.lookup_active && s.circuit.unacked_count() < MAX_PENDING - 8 {
+                    let ids = s.people.name_batch();
+                    if !ids.is_empty() {
+                        if let Some(cap) = capabilities.as_ref().and_then(|caps| caps.get("GetDisplayNames")).cloned() {
+                            let http = http.clone();
+                            s.people.lookup_active = true;
+                            jobs.spawn(async move {
+                                let result = people::lookup_names(&http, &cap, &ids).await;
+                                Job::Names { ids, result }
+                            });
+                        } else {
+                            if !s.people.warned {
+                                s.emit(Event::Notice(tr!("tui-names-unavailable").into()))?;
+                                s.people.warned = true;
+                            }
+                            s.legacy_lookup(&ids);
+                        }
                     }
                 }
                 if commands.is_closed() && logout.is_none() {
@@ -624,7 +775,7 @@ mod tests {
     use std::net::Ipv4Addr;
     use tokio::net::UdpSocket;
 
-    async fn fixture() -> (Session, mpsc::Receiver<Event>, UdpSocket) {
+    pub(super) async fn fixture() -> (Session, mpsc::Receiver<Event>, UdpSocket) {
         let simulator = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let client = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         client.writable().await.unwrap();
@@ -661,7 +812,8 @@ mod tests {
             joining: HashMap::new(),
             left: HashSet::new(),
             muted: HashSet::new(),
-            sent: HashMap::new(),
+            sent: BTreeMap::new(),
+            people: people::People::default(),
             position: Vec3::ZERO,
             arrived: false,
             logged_out: true,
@@ -710,7 +862,7 @@ mod tests {
 
     #[test]
     fn chat_requests_no_world_or_media_capabilities() {
-        assert_eq!(CHAT_CAPS, ["EventQueueGet", "ChatSessionRequest"]);
+        assert_eq!(CHAT_CAPS, ["EventQueueGet", "ChatSessionRequest", "GetDisplayNames"]);
         assert!(!CHAT_OPTIONS.iter().any(|name| name.contains("inventory") || name.contains("voice")));
     }
 
@@ -804,6 +956,7 @@ mod tests {
             .command(Command::Local {
                 text: "x".repeat(MAX_INPUT_BYTES + 1),
                 kind: 1,
+                channel: 0,
             })
             .unwrap();
         assert!(matches!(events.try_recv(), Ok(Event::Notice(_))));
@@ -832,5 +985,165 @@ mod tests {
             removed |= matches!(event, Event::GroupRemoved(group) if group == id);
         }
         assert!(removed);
+    }
+
+    #[tokio::test]
+    async fn chat_script_channels_are_signed_and_preserved_on_every_split_packet() {
+        let (mut session, mut events, simulator) = fixture().await;
+        for channel in [3, -3, i32::MIN, 0] {
+            let text = "桜".repeat(500);
+            session
+                .command(Command::Local {
+                    text: text.clone(),
+                    kind: 1,
+                    channel,
+                })
+                .unwrap();
+            let mut received = String::new();
+            for _ in crate::message_split::message_parts(&text) {
+                let message = packet(&simulator).await.decode::<ChatFromViewer>().unwrap();
+                assert_eq!(message.chat_data.channel, channel);
+                assert_eq!(message.chat_data.type_, 1);
+                received.push_str(&field_str(&message.chat_data.message));
+            }
+            assert_eq!(received, text);
+        }
+        assert!(events.try_recv().is_err(), "nonzero channels must not appear as local broadcasts");
+        let count = session.circuit.unacked_count();
+        session
+            .command(Command::Local {
+                text: "roll".into(),
+                kind: 1,
+                channel: i32::MAX,
+            })
+            .unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(_))));
+        assert_eq!(session.circuit.unacked_count(), count);
+    }
+
+    #[tokio::test]
+    async fn chat_direct_ims_use_peer_ids_xor_sessions_and_offline_friend_flags() {
+        let (mut session, mut events, simulator) = fixture().await;
+        let peer = Uuid::from_u128(42);
+        session.people.friends.insert(peer, false);
+        session
+            .command(Command::Direct {
+                id: peer,
+                text: "/me waves".into(),
+            })
+            .unwrap();
+        let wire = packet(&simulator).await;
+        let message = wire.decode::<ImprovedInstantMessage>().unwrap();
+        assert_eq!(message.message_block.dialog, 0);
+        assert_eq!(message.message_block.to_agent_id, peer);
+        assert_eq!(
+            message.message_block.id.as_u128(),
+            peer.as_u128() ^ session.login.agent_id.as_u128()
+        );
+        assert_eq!(message.message_block.offline, 1);
+        assert!(matches!(session.sent.get(&wire.sequence), Some(Sent::Direct(id, text)) if *id == peer && text == "/me waves"));
+        assert!(events.try_recv().is_err(), "do not echo unacknowledged sends");
+        session.people.friends.insert(peer, true);
+        session
+            .command(Command::Direct {
+                id: peer,
+                text: "hello".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            packet(&simulator)
+                .await
+                .decode::<ImprovedInstantMessage>()
+                .unwrap()
+                .message_block
+                .offline,
+            0
+        );
+        session
+            .command(Command::Direct {
+                id: session.login.agent_id,
+                text: "self".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            packet(&simulator)
+                .await
+                .decode::<ImprovedInstantMessage>()
+                .unwrap()
+                .message_block
+                .id,
+            session.login.agent_id
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_accepts_resident_ims_but_never_turns_task_messages_or_offers_into_people() {
+        let (mut session, mut events, _) = fixture().await;
+        let peer = Uuid::from_u128(42);
+        let mut message = ImprovedInstantMessage::default();
+        message.agent_data.agent_id = peer;
+        message.message_block.to_agent_id = session.login.agent_id;
+        message.message_block.from_agent_name = str_field("Example Resident");
+        message.message_block.message = str_field("hello");
+        message.message_block.offline = 1;
+        for dialog in [4, 19, 38, 40] {
+            message.message_block.dialog = dialog;
+            session.received(&incoming(&message)).unwrap();
+            assert!(events.try_recv().is_err(), "ignore offers, object IMs and unsupported dialogs");
+        }
+        message.message_block.dialog = 0;
+        session.received(&incoming(&message)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Names(_))));
+        assert!(matches!(events.try_recv(), Ok(Event::Direct { id, sender, text, .. }) if id == peer && sender == peer && text == "hello"));
+        message.message_block.to_agent_id = Uuid::nil();
+        session.received(&incoming(&message)).unwrap();
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_object_local_names_never_resolve_as_residents() {
+        let (mut session, mut events, _) = fixture().await;
+        let mut message = ChatFromSimulator::default();
+        message.chat_data.source_id = Uuid::from_u128(42);
+        message.chat_data.source_type = 2;
+        message.chat_data.audible = 1;
+        message.chat_data.chat_type = 1;
+        message.chat_data.from_name = str_field("HUD");
+        message.chat_data.message = str_field("rolled 20");
+        session.received(&incoming(&message)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Local { sender: None, from, .. }) if from == "HUD"));
+        assert!(session.people.name_batch().is_empty());
+        message.chat_data.source_type = 1;
+        session.received(&incoming(&message)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Names(_))));
+        assert!(matches!(events.try_recv(), Ok(Event::Local { sender: Some(_), .. })));
+        assert_eq!(session.people.name_batch(), vec![Uuid::from_u128(42)]);
+    }
+
+    #[tokio::test]
+    async fn chat_friends_presence_is_membership_scoped_and_removal_updates_the_list() {
+        let (mut session, mut events, _) = fixture().await;
+        let peer = Uuid::from_u128(42);
+        session.login.raw = llsd_map! { "buddy-list" => vec![llsd_map! { "buddy_id" => peer }] };
+        session.load_friends().unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Friends(friends)) if friends == vec![Friend { id: peer, online: false }]));
+        let mut online = OnlineNotification::default();
+        online.agent_block.push(online_notification::AgentBlock { agent_id: peer });
+        online.agent_block.push(online_notification::AgentBlock {
+            agent_id: Uuid::from_u128(99),
+        });
+        session.received(&incoming(&online)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Friends(friends)) if friends == vec![Friend { id: peer, online: true }]));
+        assert_eq!(session.people.friends.len(), 1);
+        session.received(&incoming(&online)).unwrap();
+        assert!(events.try_recv().is_err(), "unchanged snapshots do not trigger redraws");
+        let mut offline = OfflineNotification::default();
+        offline.agent_block.push(offline_notification::AgentBlock { agent_id: peer });
+        session.received(&incoming(&offline)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Friends(friends)) if !friends[0].online));
+        let mut removed = TerminateFriendship::default();
+        removed.ex_block.other_id = peer;
+        session.received(&incoming(&removed)).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Friends(friends)) if friends.is_empty()));
     }
 }

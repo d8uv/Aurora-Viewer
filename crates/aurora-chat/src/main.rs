@@ -2,7 +2,7 @@ mod model;
 mod ui;
 
 use aurora_i18n::tr;
-use aurora_net::chat::{self, Command, Event};
+use aurora_net::chat::{self, Command, Event, Friend, Nearby, ResidentName};
 use aurora_net::login::LoginError;
 use aurora_net::social::GroupMembership;
 use crossterm::event::{Event as TerminalEvent, EventStream, KeyCode, KeyEventKind, KeyModifiers};
@@ -83,15 +83,85 @@ fn demo_command(model: &mut Model, command: Command) {
         Command::Leave(id) => model.event(Event::Left(id)),
         Command::Group { id, text } => model.event(Event::Group {
             id,
+            sender: Some(Uuid::from_u128(10)),
             from: tr!("tui-demo-you").into(),
             text,
         }),
+        Command::Local { channel, .. } if channel != 0 => model.notice(&tr!("tui-demo-channel-sent", channel = channel.to_string())),
         Command::Local { text, .. } => model.event(Event::Local {
+            sender: Some(Uuid::from_u128(10)),
+            from: tr!("tui-demo-you").into(),
+            text,
+        }),
+        Command::Direct { id, text } => model.event(Event::Direct {
+            id,
+            sender: Uuid::from_u128(10),
             from: tr!("tui-demo-you").into(),
             text,
         }),
         Command::Logout => {}
     }
+}
+
+fn demo_residents(model: &mut Model) {
+    let you = Uuid::from_u128(10);
+    let friend = Uuid::from_u128(11);
+    let distant = Uuid::from_u128(12);
+    let unknown = Uuid::from_u128(13);
+    model.event(Event::Names(vec![
+        ResidentName {
+            id: you,
+            display_name: tr!("tui-demo-you").into(),
+            legacy_name: "Demo Resident".into(),
+        },
+        ResidentName {
+            id: friend,
+            display_name: "Sakura".into(),
+            legacy_name: "Sakura Example".into(),
+        },
+        ResidentName {
+            id: distant,
+            display_name: "River".into(),
+            legacy_name: "River Example".into(),
+        },
+        ResidentName {
+            id: unknown,
+            display_name: "Sky".into(),
+            legacy_name: "Sky Example".into(),
+        },
+    ]));
+    model.event(Event::Friends(vec![
+        Friend { id: friend, online: true },
+        Friend {
+            id: distant,
+            online: false,
+        },
+    ]));
+    model.event(Event::Nearby(vec![
+        Nearby {
+            id: friend,
+            distance: Some(12.5),
+        },
+        Nearby {
+            id: distant,
+            distance: Some(35.0),
+        },
+        Nearby {
+            id: unknown,
+            distance: None,
+        },
+    ]));
+    model.event(Event::Local {
+        sender: Some(friend),
+        from: "Sakura Example".into(),
+        text: tr!("tui-demo-hello").into(),
+    });
+    model.event(Event::Direct {
+        id: friend,
+        sender: friend,
+        from: "Sakura Example".into(),
+        text: tr!("tui-demo-direct").into(),
+    });
 }
 
 async fn run(options: Options) -> io::Result<()> {
@@ -113,6 +183,7 @@ async fn run(options: Options) -> io::Result<()> {
     let mut dirty = true;
     if options.demo {
         model.event(Event::Groups(demo_groups()));
+        demo_residents(&mut model);
         model.notice(tr!("tui-demo-intro"));
         model.notice(tr!("tui-welcome"));
     }
@@ -263,5 +334,50 @@ mod tests {
         let options = options(["--demo", "--language=ja"].into_iter().map(String::from)).unwrap();
         assert!(options.demo);
         assert_eq!(options.language, "ja");
+    }
+
+    #[test]
+    fn demo_fixtures_include_friends_names_radar_and_incoming_direct_chat() {
+        let mut model = Model::default();
+        demo_residents(&mut model);
+        assert_eq!(model.current, 0);
+        assert_eq!(model.friends.len(), 2);
+        assert_eq!(model.nearby.len(), 3);
+        assert_eq!(model.buffers.len(), 2);
+        assert!(model.radar_rows().iter().any(|row| row.contains("Sakura (Sakura Example)")));
+        assert_eq!(model.buffers[1].unread, 1);
+    }
+
+    #[test]
+    fn demo_script_sends_are_not_presented_as_nearby_broadcasts() {
+        let mut model = Model::default();
+        demo_command(
+            &mut model,
+            Command::Local {
+                text: "roll".into(),
+                kind: 1,
+                channel: 3,
+            },
+        );
+        let line = model.format_entry(model.buffers[0].lines.back().unwrap());
+        assert!(line.contains(&*tr!("tui-demo-channel-sent", channel = "3")));
+        assert!(!line.contains("roll"));
+        demo_command(
+            &mut model,
+            Command::Local {
+                text: "hello".into(),
+                kind: 1,
+                channel: 0,
+            },
+        );
+        assert!(model.format_entry(model.buffers[0].lines.back().unwrap()).ends_with(": hello"));
+        demo_command(
+            &mut model,
+            Command::Direct {
+                id: Uuid::from_u128(11),
+                text: "direct".into(),
+            },
+        );
+        assert!(model.format_entry(model.buffers[1].lines.back().unwrap()).ends_with(": direct"));
     }
 }

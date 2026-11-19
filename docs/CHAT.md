@@ -1,7 +1,7 @@
 # Terminal chat
 
-Aurora Chat is a separate, experimental terminal executable for **Local and
-group text chat only**. It shares the viewer's login, TLS, packet codecs and
+Aurora Chat is a separate, experimental terminal executable for **Local,
+group and direct text chat**. It shares the viewer's login, TLS, packet codecs and
 reliable UDP transport, but does not start or build a renderer, graphical
 window, asset decoder, inventory, audio, voice or media subsystem.
 The normal Aurora Viewer remains available.
@@ -15,8 +15,10 @@ cargo build -p aurora-chat --locked
 cargo run -p aurora-chat --locked -- --demo
 ```
 
-`--demo` is completely offline. Try `/groups`, `/join 1`, typing a message,
-Tab, `/local`, PageUp and `/quit`. Demo messages are local echoes, not proof
+`--demo` is completely offline. Try `/friends`, `/query 1`, `/radar`, `/local`,
+`/3 roll`, `/groups`, `/join 1`, typing a message, Tab, PageUp and `/quit`.
+The demo includes online/offline friends, an incoming DM and nearby residents
+with known and unknown distances. Demo messages are local echoes, not proof
 that a live simulator accepted a message.
 
 To connect, **run this yourself** in an interactive terminal:
@@ -57,10 +59,15 @@ cargo install --path crates/aurora-chat --locked --debug
 |---|---|
 | `/groups` | List the groups you already belong to |
 | `/join <number or full name>` | Open one of those groups' chat sessions |
-| `/part` | Close the current chat session; does **not** leave the group |
+| `/friends [page]` | List friends and online/offline presence; 100 per page |
+| `/query <recipient>` | Open a direct-message buffer |
+| `/msg <recipient> <text>`, `/im <recipient> <text>` | Open a direct chat and send |
+| `/radar [page]`, `/nearby [page]` | List nearby residents and approximate chat range; 100 per page |
+| `/part` | Close the current group or direct chat; does **not** leave the group |
 | `/local` | Switch to Local |
 | Tab / Shift-Tab, `/next`, `/prev` | Change chat buffer, retaining its draft |
 | `/whisper <text>`, `/shout <text>` | Whisper/shout in Local |
+| `/3 roll`, `/3roll`, `/-3roll` | Send to that signed script channel, from Local only |
 | `/me <action>` | Send an action in the current chat |
 | `//text` | Send a literal leading slash |
 | PageUp / PageDown | Scroll the current transcript |
@@ -69,8 +76,49 @@ cargo install --path crates/aurora-chat --locked --debug
 | `/help` | Command reference |
 | `/quit`, Ctrl-C or Esc | Request logout, wait for confirmation, restore terminal |
 
-Wide terminals show a chat sidebar with unread counts. Narrow terminals show
-only the active chat. Incoming group invitations are accepted only for groups
+Recipients can be a UUID, a 1-based number from `/friends`, or an exact full
+display or legacy name, without quotes. Names are matched case-insensitively
+for ASCII; ambiguous names are refused rather than guessing. For example,
+`/msg Sakura Example hello` resolves the longest matching full-name prefix.
+Radar numbers are not recipient shortcuts. Open a buffer first with `/query`
+to avoid ambiguity between a name and the beginning of a message. `/friends`
+numbers follow the current list; check it again after friendship changes.
+Presence honors the grid's notifications: "offline" can also mean the friend
+has hidden their online status from you.
+
+Numeric channels are signed 32-bit values, excluding the reserved debug
+channel `2147483647`. They never route to a group or direct chat. A nonzero
+channel send shows a notice after the simulator acknowledges the packet;
+it is not a public Local echo or confirmation that a HUD script ran.
+Unlike the Legacy Viewer's repeat-channel shortcut, `//text` deliberately
+keeps this client's original meaning: send literal `/text` to the active chat.
+
+Messages use `[YYYY/MM/DD HH:MM] Display (Legacy): text`, with the machine's
+local timezone and receipt time. `/me` is retained literally, as in SL chat
+logs. Identical names are shown once; legacy names or UUIDs remain usable
+until the People API responds. Late lookups also resolve retained history,
+DM titles, friend lists and radar. Scripted objects keep their object names.
+This is in-memory formatting, not disk logging.
+
+Wide terminals show a chat sidebar with unread counts. At 110 columns or more,
+Local also shows a live radar sidebar. Narrow terminals show only the active
+chat; `/radar` remains available. Radar uses the simulator's coarse map
+locations, not object/appearance downloads: XY is quantized to roughly one
+metre and Z to four metres on a standard region. Distances and the normal-chat
+20-metre marker are **approximate**, especially near the boundary. Altitudes
+at or above the coarse limit (1020 m) are unknown, not falsely "in range."
+Only residents reported in the login region are listed; this is not proof
+of who can hear you across a boundary or with unusual region chat settings.
+Snapshots expire after 30 seconds without an update.
+
+Incoming DMs open a separate buffer without taking focus; plain text in that
+buffer replies to its peer. Direct messages do not require group session
+startup. Queued offline IMs are requested after connecting, and offline friends
+receive the protocol's offline delivery flag. Own DM echoes, like group echoes,
+wait for the simulator's transport acknowledgment; it does not prove that the
+recipient read or received the text.
+
+Incoming group invitations are accepted only for groups
 in the account's membership list, not arbitrary conferences or voice calls.
 Group sends wait until session start is confirmed; text moderation is observed.
 Own group messages appear after the simulator acknowledges the UDP packet:
@@ -83,10 +131,14 @@ event queues are reported explicitly rather than pretending delivery succeeded.
 - One Tokio runtime worker, event-driven terminal redraw, no frame loop or GPU.
 - A chat-only build bundles only terminal and shared login/session
   translations, not the graphical viewer's complete catalogs.
-- At most 64 group-chat buffers plus Local; 128 rows per buffer and at most
+- At most 64 group/direct-chat buffers plus Local; 128 rows per buffer and at most
   2048 UTF-8 bytes per displayed row. History is session-only and older rows
   are evicted. Input is capped at 4096 bytes; wire messages reuse the viewer's
   Unicode-safe 1023-byte splitting.
+- At most 4096 friends, nearby entries and cached resident names. Name lookups
+  run one batch of up to 64 at a time, with a ten-minute refresh interval and
+  legacy UDP fallback; name responses are capped at 1 MiB. Old cached names
+  are evicted rather than retaining every resident ever encountered.
 - 64 queued user commands, 128 UI events and 128 event-queue events. If the UI
   cannot keep up, the session stops with an explicit error instead of growing
   memory without bound. At most 128 reliable sends are pending.
@@ -97,7 +149,7 @@ event queues are reported explicitly rather than pretending delivery succeeded.
   discarded **without decoding or retaining world objects**.
 - No textures, meshes, inventory, appearance/outfit requests or cache files.
   Your avatar remains at the login location; its appearance is not managed.
-- No movement, teleport/crossing support, direct IM UI, offline IM retrieval,
+- No movement, teleport/crossing support, friendship offer/rights management,
   group administration, mute-list management, chat persistence, saved
   accounts, updater or media. Unsupported offers are not automatically accepted.
 - Standard HTTP proxy environment settings apply through the shared proxy
@@ -119,33 +171,55 @@ measurable CPU ticks during a 30-second idle sample. Before excluding the graphi
 translation catalogs it used about 48 MiB. These are offline process
 measurements, not a live-session memory or bandwidth guarantee.
 
+After adding channels, friends, DMs, radar and timestamped display names, a
+Linux pseudo-terminal demo run with Local, group and direct chat used
+**7240 KiB (about 7.1 MiB) resident memory**, two OS threads, no IP sockets and
+zero CPU ticks in a 30-second idle sample. The demo remains entirely offline.
+
 ## Validation
 
 Automated tests cover UTF-8 input and bounds, terminal-control sanitization,
 masked login, tiny terminal sizes, wrapping, unread/draft state, commands,
-membership/session gating, wire messages and chat-only throttles. Shared
+membership/session gating, channel/DM wire fields, friend presence, late name
+resolution, bounded People API responses, radar scaling/expiry and chat-only throttles. Shared
 login, TLS, reliable-circuit and event-queue tests remain applicable.
 
 The standalone build, strict chat/default-viewer-network clippy checks,
-207 selected workspace tests and 11 full-catalog integration tests pass.
-A pseudo-terminal check verifies actual Local/group output, switching,
-bracketed paste, resizing, quitting and restoration of terminal modes.
+231 selected workspace tests and nine full-catalog integration tests pass after
+these additions. The licence inventory was regenerated without changes.
+A pseudo-terminal check verifies actual Local/group/direct output, channel
+isolation, friends, radar, full-name recipients, switching, bracketed paste,
+resizing, quitting and restoration of terminal modes.
 Full `scripts/check.ps1` validation is currently blocked in this Linux
 environment by the graphical viewer's missing ALSA development library;
 this is not a dependency of the standalone chat client.
 
 The following checks **must be performed by a human**, not an automated agent,
-before treating live chat as validated:
+before treating all live chat features as validated. The human confirmed the
+initial live login, Local and group chat on 2026-11-19; the additions below
+still need fresh live validation:
 
 1. Log in with Last and Home; test MFA and, when offered, explicit terms consent.
 2. With a second client nearby, exchange Unicode Local messages, whispers,
    shouts, `/me` actions and a message longer than 1023 bytes.
 3. Use `/groups` and `/join`; exchange messages in multiple groups. Confirm
    incoming invitations, unread counts, moderation, `/part` and reopening.
-4. Confirm `/part` does not remove group membership; ignored IM/asset offers
+4. With the command-listening HUD already worn, use `/local`, then `/3 roll`;
+   confirm the actual roll, signed channels where applicable, and that trying
+   `/3 roll` from a group or DM is refused without sending there.
+5. Compare `/radar` and the wide Local sidebar with a nearby client at normal
+   chat distance and beyond it. Check departure updates and unknown altitude
+   above 1020 m; allow for coarse-location error near 20 m.
+6. Check `/friends` against known online/offline friends. Exchange incoming and
+   outgoing DMs, including an offline friend; test reply drafts, unread counts,
+   `/part`, and a queued IM delivered at login.
+7. Check Local/group/DM senders with display names different from legacy names,
+   including Unicode, your own name and a scripted object. Confirm timestamp
+   timezone and `[timestamp] Display (Legacy): /me ...` formatting.
+8. Confirm `/part` does not remove group membership; ignored IM/asset offers
    are not accepted; no avatar movement or unexpected asset requests occur.
-5. Leave the client idle for at least 30 minutes. Test disconnection and
+9. Leave the client idle for at least 30 minutes. Test disconnection and
    relogin, `/quit`, terminal restoration and immediate login from another client.
-6. Measure resident memory, idle CPU and network traffic in quiet and busy
+10. Measure resident memory, idle CPU and network traffic in quiet and busy
    regions. Compare with an IRC client and the graphical viewer on the same
    machine. Offline-demo numbers alone are not representative of live traffic.

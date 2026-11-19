@@ -6,6 +6,54 @@
 use aurora_llsd::Llsd;
 use uuid::Uuid;
 
+/// LLViewerRegion::updateCoarseLocations: XY scales with each region axis;
+/// Z has four-metre resolution (255 cannot give a reliable altitude).
+pub fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> glam::Vec3 {
+    glam::Vec3::new(
+        f32::from(x) * size.0 as f32 / 256.0,
+        f32::from(y) * size.1 as f32 / 256.0,
+        f32::from(z) * 4.0,
+    )
+}
+
+/// One People API record, shared by the graphical and terminal clients.
+/// Follows LLAvatarName::fromLLSD (indra/llcommon/llavatarname.cpp).
+#[derive(Debug, Clone, Default)]
+pub struct AvatarNameData {
+    pub id: Uuid,
+    /// Account name ("jane.doe", or "janedoe" for Resident names).
+    pub username: String,
+    pub display_name: String,
+    pub legacy_first: String,
+    pub legacy_last: String,
+    /// No chosen display name: it is built from the account name.
+    pub is_default: bool,
+    /// Unix time before which the display name cannot be changed again.
+    pub next_update: f64,
+}
+
+impl AvatarNameData {
+    pub fn from_llsd(v: &Llsd) -> Self {
+        let mut d = Self {
+            id: v["id"].as_uuid(),
+            username: v["username"].to_string_value(),
+            display_name: v["display_name"].to_string_value(),
+            legacy_first: v["legacy_first_name"].to_string_value(),
+            legacy_last: v["legacy_last_name"].to_string_value(),
+            is_default: v["is_display_name_default"].as_bool(),
+            next_update: v["display_name_next_update"].as_f64(),
+        };
+        if d.username.is_empty() {
+            d.username = v["sl_id"].to_string_value();
+        }
+        if d.display_name.is_empty() {
+            d.display_name = d.username.clone();
+            d.is_default = true;
+        }
+        d
+    }
+}
+
 /// A group the agent belongs to (AgentGroupDataUpdate, LLGroupData).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupMembership {

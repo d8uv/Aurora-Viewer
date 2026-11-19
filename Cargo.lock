@@ -569,6 +569,7 @@ dependencies = [
  "aurora-i18n",
  "aurora-net",
  "aurora-version",
+ "chrono",
  "crossterm",
  "futures-util",
  "ratatui",

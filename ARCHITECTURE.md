@@ -5,9 +5,11 @@
 `aurora-chat` is an independent executable, not a headless graphical viewer.
 `main.rs` runs a single-threaded Tokio event loop and draws the Ratatui terminal
 only after input, resize or network events. `model.rs` owns UTF-8 editing,
-commands, bounded per-chat transcripts, unread counts and terminal-text
-sanitization; `ui.rs` owns terminal restoration, masked login and responsive
-chat layouts. No accounts, chat logs or viewer settings are read or written.
+commands, bounded per-chat transcripts with receipt timestamps and speaker
+identities, unread counts and terminal-text sanitization; names resolved later
+also update retained transcript rows. Group and direct buffers have distinct
+keys. `ui.rs` owns terminal restoration, masked login, responsive chat layouts
+and the live Local radar sidebar. No accounts, chat logs or viewer settings are read or written.
 See [Terminal chat](docs/CHAT.md).
 
 `aurora-net` retains its default `viewer` feature and public viewer API;
@@ -15,9 +17,17 @@ See [Terminal chat](docs/CHAT.md).
 and `NetClient`. The independent `chat` feature with default features disabled
 builds `chat.rs` and the shared login, XML-RPC, TLS, message splitting, social
 parsers and reliable UDP machinery, without `aurora-assets` or `aurora-prim`.
-Chat requests only EventQueueGet and ChatSessionRequest. It stays in its login
-region, acknowledges discarded world packets without decoding them, and keeps
-bounded channels and session state. The event queue has a bounded sender
+Chat requests only EventQueueGet, ChatSessionRequest and GetDisplayNames. It
+stays in its login region, acknowledges discarded world packets without decoding
+them, and keeps bounded channels and session state. `chat/people.rs` owns the
+login buddy list, presence, a 4096-entry name cache with batched asynchronous
+lookups and legacy-name fallback, and expiring coarse-location radar snapshots.
+Radar uses no avatar/object model; distances are approximate and unknown when
+coarse altitude is saturated. The People API record parser and coarse-coordinate
+scaling live in shared `social.rs`; the viewer keeps its existing API.
+Direct IMs use peer IDs and XOR session IDs, offline friend flags and queued
+offline-message retrieval. Script channels remain local simulator messages.
+The event queue has a bounded sender
 variant; the viewer retains its original unbounded sender. Feature unification
 means a workspace-wide build also enables viewer networking; build/install
 `aurora-chat` specifically for the lean executable.

@@ -1515,45 +1515,7 @@ pub enum NetEvent {
     },
 }
 
-/// One avatar record of the People API (GetDisplayNames "agents" entries,
-/// DisplayNameUpdate "agent"), as read by LLAvatarName::fromLLSD.
-#[derive(Debug, Clone, Default)]
-pub struct AvatarNameData {
-    pub id: Uuid,
-    /// Account name ("jane.doe", or "janedoe" for Resident names).
-    pub username: String,
-    pub display_name: String,
-    pub legacy_first: String,
-    pub legacy_last: String,
-    /// No display name chosen: the display name is built from the username.
-    pub is_default: bool,
-    /// Unix time before which the display name cannot be changed again.
-    pub next_update: f64,
-}
-
-impl AvatarNameData {
-    pub fn from_llsd(v: &aurora_llsd::Llsd) -> AvatarNameData {
-        let mut d = AvatarNameData {
-            id: v["id"].as_uuid(),
-            username: v["username"].to_string_value(),
-            display_name: v["display_name"].to_string_value(),
-            legacy_first: v["legacy_first_name"].to_string_value(),
-            legacy_last: v["legacy_last_name"].to_string_value(),
-            is_default: v["is_display_name_default"].as_bool(),
-            next_update: v["display_name_next_update"].as_f64(),
-        };
-        // older People API replies name it "sl_id"
-        if d.username.is_empty() {
-            d.username = v["sl_id"].to_string_value();
-        }
-        // some avatars have no explicit display name: force a legible one
-        if d.display_name.is_empty() {
-            d.display_name = d.username.clone();
-            d.is_default = true;
-        }
-        d
-    }
-}
+pub use crate::social::AvatarNameData;
 
 /// One object to attach from the inventory (point 0 = where it was last worn).
 #[derive(Debug, Clone)]

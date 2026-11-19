@@ -35,11 +35,14 @@ cargo run -p aurora-chat
 ```
 
 The first command is entirely offline. The second prompts privately for your
-Second Life login and provides Local and group chat with IRC-style commands.
+Second Life login and provides Local, group and direct chat with IRC-style
+commands, script channels, friends/presence, approximate nearby radar and
+timestamped display/legacy names.
 It does not build the renderer, windowing, asset, audio, voice or media stacks.
 The graphical viewer is unchanged. See [Terminal chat](docs/CHAT.md) for
 installation, commands, resource limits and the live-testing checklist.
-**Experimental: live-grid validation is still required.**
+**Experimental:** the initial live login and Local/group chat were human-tested;
+the newer social and channel features still need live-grid validation.
 
 **Multi-threaded from the ground up: parallel loading, ultra fast teleports, built for today's hardware with Vulkan and Rust.**  
 <img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  

@@ -1,4 +1,4 @@
-use crate::model::{Editor, Model, clean};
+use crate::model::{Chat, Editor, Model, clean};
 use aurora_i18n::tr;
 use aurora_net::login::{LastExec, LoginRequest, Platform, SL_MAIN_GRID, StartLocation};
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent, KeyModifiers};
@@ -225,7 +225,7 @@ fn draw_login(frame: &mut Frame<'_>, area: Rect, login: &Login) {
 
 fn draw_chat(frame: &mut Frame<'_>, area: Rect, model: &Model) {
     let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-    let (sidebar, transcript) = if area.width >= 70 {
+    let (sidebar, mut transcript) = if area.width >= 70 {
         let columns = Layout::horizontal([Constraint::Length(22), Constraint::Min(1)]).split(rows[0]);
         (Some(columns[0]), columns[1])
     } else {
@@ -241,7 +241,7 @@ fn draw_chat(frame: &mut Frame<'_>, area: Rect, model: &Model) {
                 } else {
                     format!(" ({})", buffer.unread)
                 };
-                ListItem::new(format!("{}{}", buffer.name, unread))
+                ListItem::new(format!("{}{}", model.title(buffer), unread))
             })
             .collect();
         let mut state = ListState::default().with_selected(Some(model.current));
@@ -254,9 +254,20 @@ fn draw_chat(frame: &mut Frame<'_>, area: Rect, model: &Model) {
         );
     }
     let active = model.active();
-    let block = Block::default().borders(Borders::ALL).title(active.name.as_str());
+    if area.width >= 110 && active.chat == Chat::Local {
+        let columns = Layout::horizontal([Constraint::Min(1), Constraint::Length(36)]).split(transcript);
+        transcript = columns[0];
+        let radar: Vec<_> = model.radar_rows().into_iter().map(Line::from).collect();
+        frame.render_widget(
+            Paragraph::new(radar)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title(tr!("tui-radar-title"))),
+            columns[1],
+        );
+    }
+    let block = Block::default().borders(Borders::ALL).title(model.title(active));
     let inner = block.inner(transcript);
-    let lines: Vec<Line<'_>> = active.lines.iter().map(|s| Line::from(s.as_str())).collect();
+    let lines: Vec<Line<'_>> = active.lines.iter().map(|entry| Line::from(model.format_entry(entry))).collect();
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let height = paragraph.line_count(inner.width);
     let bottom = height.saturating_sub(usize::from(inner.height)).min(u16::MAX as usize) as u16;
@@ -279,7 +290,7 @@ mod tests {
         let mut login = Login::default();
         login.fields[1].insert("dummy-password");
         login.fields[2].insert("123456");
-        for (width, height) in [(100, 30), (40, 15), (10, 4), (1, 1)] {
+        for (width, height) in [(120, 30), (100, 30), (40, 15), (10, 4), (1, 1)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| draw_login(frame, frame.area(), &login)).unwrap();
             let output: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -291,11 +302,30 @@ mod tests {
     #[test]
     fn chat_wraps_and_scrolls_without_overflow_at_small_sizes() {
         let mut model = Model::default();
+        crate::demo_residents(&mut model);
         model.notice(&"桜".repeat(500));
         model.active_mut().draft.insert(&"世界".repeat(100));
-        for (width, height) in [(100, 30), (40, 15), (10, 4), (1, 1)] {
+        for (width, height) in [(120, 30), (100, 30), (40, 15), (10, 4), (1, 1)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| draw_chat(frame, frame.area(), &model)).unwrap();
         }
+    }
+
+    #[test]
+    fn wide_local_has_live_radar_and_direct_titles_use_resolved_names() {
+        let mut model = Model::default();
+        crate::demo_residents(&mut model);
+        let mut terminal = Terminal::new(TestBackend::new(150, 35)).unwrap();
+        terminal.draw(|frame| draw_chat(frame, frame.area(), &model)).unwrap();
+        let output: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(output.contains("12.5"));
+        assert!(output.contains(&*tr!("tui-radar-title")));
+        assert!(output.contains("Sky"));
+        assert!(output.contains(tr!("tui-radar-unknown").split_whitespace().next().unwrap()));
+        model.switch(1);
+        terminal.draw(|frame| draw_chat(frame, frame.area(), &model)).unwrap();
+        let output: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(output.contains("Sakura (Sakura Example)"));
+        assert!(!output.contains(&*tr!("tui-radar-title")));
     }
 }

@@ -15904,7 +15904,7 @@ tui-backlog = 受信に追いつかなくなりました。メッセージを通
 tui-group-limit = このクライアントで保持できる数を超えるグループが送信されました。
 tui-send-busy = 送信待ちのメッセージが多すぎます。シミュレーターの応答を待って再試行してください。
 tui-not-member = このグループのメンバーではありません。
-tui-session-limit = グループチャットの数が上限に達しました。/part で閉じてください。
+tui-session-limit = チャットの数が上限に達しました。/part で閉じてください。
 tui-invalid-text = 制御文字を含まない、4096 UTF-8バイト以内の空でないメッセージを入力してください。
 tui-group-not-ready = グループチャットの準備中、またはモデレーターによりテキストチャットがミュートされています。
 tui-moderation-changed = グループでのテキストチャットの権限が変更されました。
@@ -15924,6 +15924,11 @@ tui-part-local = 近くのチャットは閉じられません。
 tui-local-command = /whisper と /shout は近くのチャットでのみ使用でき、メッセージが必要です。
 tui-unknown-command = 不明なコマンドです。/help を使用してください。先頭の / を送信するには // を入力します。
 tui-help =
+    /friends [ページ] — フレンドとオンライン状態を表示（1ページ100人）
+    /query <宛先> — IM を開く；/msg または /im <宛先> <本文> — IM を送信
+    宛先：UUID、フレンド一覧番号、または一意の完全な表示名／旧式名
+    /radar [ページ], /nearby [ページ] — 近くの住人、概算距離、通常チャットの範囲（20 m）を表示
+    /3 roll, /-3roll — Local のみでスクリプトチャンネルへ送信；//text は常に文字の / を送信
     /groups — 所属グループの一覧
     /join <番号または完全な名前> — 所属グループのチャットを開く
     /part — グループを退会せずにチャットを閉じる
@@ -15962,6 +15967,24 @@ tui-demo-you = 自分（オフラインデモ）
 tui-demo = オフラインデモ — ネットワークなし
 tui-offline = オフライン
 tui-online = オンライン
-tui-demo-intro = オフラインデモです。/groups の後に /join 1 でグループチャットを開きます。メッセージはローカル表示のみです。
+tui-demo-intro = オフラインデモです。/groups、/join 1、/friends、/query 1、/radar をお試しください。送信はシミュレーションです。スクリプトチャンネルは近距離チャットではなく通知を表示します。
 tui-welcome = /help でコマンドを表示、Tabでチャットを切り替えます。ディスクには書き込みません。
 tui-quitting = ログアウト中…
+tui-direct-title = IM: { $name }
+tui-friends-heading = フレンド（一覧番号で宛先を指定）：
+tui-recipient-usage = /query <宛先> または /msg <宛先> <本文>（/im も可）を使用してください。UUID、フレンド一覧番号、または一意の完全な表示名／旧式名を指定します。
+tui-channel-local = スクリプトチャンネルは Local からのみ送信できます。先に /local を使用してください。何も送信していません。
+tui-channel-usage = /<チャンネル> <本文>（例：/3 roll、/-3roll）を使用してください。チャンネルは符号付き32ビット整数で、予約済みデバッグチャンネル 2147483647 は使用できません。
+tui-radar-title = 近く · 通常チャット 20 m
+tui-radar-heading = 近くの住人 — 概算3D距離；通常チャットの範囲は20 m：
+tui-radar-in-range = 約{ $distance } m · 20 m以内
+tui-radar-outside = 約{ $distance } m · 20 m超
+tui-radar-unknown = 距離不明 · 範囲不明
+tui-demo-channel-sent = オフラインデモ：チャンネル { $channel } への送信を再現しました。近距離への配信ではありません。
+tui-demo-hello = こんにちは！ /friends と /radar をお試しください。
+tui-demo-direct = これはデモの IM です。/query 1 で返信できます。
+tui-names-unavailable = 表示名を取得できません。次の検索まで旧式名を使用します。
+tui-resident-limit = フレンド一覧がクライアントの上限を超えています。
+tui-channel-sent = チャンネル { $channel } に送信：{ $text }
+tui-list-page = { $page }/{ $pages } ページ
+tui-list-page-usage = /friends [ページ] または /radar [ページ] に有効なページ番号を指定してください。1ページに最大100人を表示します。
