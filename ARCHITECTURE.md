@@ -34,8 +34,14 @@ built-in self-animation transition states, never arbitrary animation IDs.
 `/diagnostics` displays an on-demand in-memory snapshot; it stores no packet
 contents, credentials, names, locations or capability URLs. Script dialogs and
 permission requests produce a one-time unsupported-feature notice, never an
-automatic reply or permission grant. Animation packets are observed for
-diagnostics only; no assets are fetched and no animation commands are sent.
+automatic reply or permission grant. Animation packets are observed without
+fetching assets. Only the explicit `/finishanim` recovery command sends
+animation stops, restricted to currently reported built-in self transitions
+(`standup`, `prejump`, `land`, `medium_land`), plus a one-shot `FINISH_ANIM`
+update. It never stops custom animations or performs automatic completion;
+diagnostics count requests without treating them as successful recovery.
+`control.rs` shares the existing AgentUpdate bit constants between both clients,
+without enabling the viewer feature in a standalone chat build.
 The event queue has a bounded sender
 variant; the viewer retains its original unbounded sender. Feature unification
 means a workspace-wide build also enables viewer networking; build/install

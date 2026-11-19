@@ -5,6 +5,7 @@ use aurora_msg::msgs::{AvatarAnimation, ScriptControlChange};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
+use uuid::Uuid;
 
 // LLAgent::onAnimStop (indra/newview/llagent.cpp) signals completion of
 // these states. Names/IDs: indra/llcharacter/llanimationstates.cpp.
@@ -36,6 +37,7 @@ pub(super) struct State {
     animation_sources: usize,
     transition_bits: u8,
     animation_at: Option<Instant>,
+    transition_finish_requests: u64,
 }
 
 impl State {
@@ -102,6 +104,17 @@ impl State {
         }
     }
 
+    pub(super) fn transition_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        TRANSITIONS
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (id, _))| (self.transition_bits & (1 << i) != 0).then_some(Uuid::from_u128(*id)))
+    }
+
+    pub(super) fn transition_finish_requested(&mut self) {
+        self.transition_finish_requests = self.transition_finish_requests.saturating_add(1);
+    }
+
     fn lines(&self) -> Vec<String> {
         let transitions: Vec<_> = TRANSITIONS
             .iter()
@@ -140,6 +153,10 @@ impl State {
                 }
             ),
             "animation_playback=disabled appearance_loading=disabled".into(),
+            format!(
+                "transition_finish_requests={} automatic_animation_completion=disabled",
+                self.transition_finish_requests
+            ),
         ];
         for (label, values) in [
             ("received_im_dialogs", &self.instant_messages),

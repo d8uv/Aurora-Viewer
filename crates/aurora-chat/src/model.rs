@@ -480,6 +480,7 @@ impl Model {
                 Action::None
             }
             "/diagnostics" => Action::Send(Command::Diagnostics),
+            "/finishanim" if argument.is_empty() => Action::Send(Command::FinishAnimation),
             "/groups" => {
                 self.notice(tr!("tui-groups-heading"));
                 let lines: Vec<_> = self
@@ -647,6 +648,8 @@ mod tests {
     fn diagnostics_are_a_local_snapshot_command_in_every_chat() {
         let mut model = Model::default();
         assert!(matches!(submit(&mut model, "/diagnostics"), Action::Send(Command::Diagnostics)));
+        assert!(matches!(submit(&mut model, "/finishanim"), Action::Send(Command::FinishAnimation)));
+        assert!(matches!(submit(&mut model, "/finishanim arbitrary-id"), Action::None));
         model.event(Event::Direct {
             id: Uuid::from_u128(11),
             sender: Uuid::from_u128(11),
@@ -655,6 +658,7 @@ mod tests {
         });
         model.switch(1);
         assert!(matches!(submit(&mut model, "/diagnostics"), Action::Send(Command::Diagnostics)));
+        assert!(matches!(submit(&mut model, "/finishanim"), Action::Send(Command::FinishAnimation)));
         model.event(Event::Diagnostics(vec!["diagnostics=1".into(), "received_im_dialogs: 19=1".into()]));
         let lines: Vec<_> = model.active().lines.iter().map(|line| model.format_entry(line)).collect();
         assert!(lines.iter().any(|line| line.ends_with("* diagnostics=1")));

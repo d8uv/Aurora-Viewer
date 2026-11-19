@@ -16066,6 +16066,7 @@ tui-help =
     /whisper <texte>, /shout <texte> — chuchoter ou crier en Proximité
     /me <action> — envoyer une action ; //texte — envoyer une barre oblique
     /diagnostics — afficher un état du protocole sans données privées pour diagnostiquer les HUD et les animations
+    /finishanim — demander manuellement la fin des seules transitions intégrées signalées pour votre avatar, jamais des animations personnalisées
     Page préc. / Page suiv. — défiler ; Ctrl-U — vider la saisie
     /quit, Ctrl-C ou Échap — se déconnecter et quitter
 tui-login-required = Saisissez votre nom de compte et votre mot de passe. Ils ne sont pas enregistrés.
@@ -16119,6 +16120,9 @@ tui-channel-sent = Envoyé sur le canal { $channel } : { $text }
 tui-list-page = Page { $page }/{ $pages }
 tui-list-page-usage = Utilisez /friends [page] ou /radar [page] avec un numéro de page valide. Chaque page contient au plus 100 résidents.
 tui-diagnostics-intro = État de diagnostic : aucun nom, identifiant, lieu ni texte de discussion. Copiez les compteurs du protocole ci-dessous, pas votre historique. Un acquittement ne prouve pas qu’un script s’est exécuté.
+tui-finishanim-none = Aucune transition intégrée n’est actuellement signalée pour votre avatar. Rien n’a été envoyé.
+tui-finishanim-requested = Fin demandée pour les transitions intégrées : { $count }. Aucune animation personnalisée n’a été arrêtée. Relancez /diagnostics pour vérifier l’état du simulateur.
+tui-finishanim-demo = Démonstration hors ligne : /finishanim n’envoie rien et ne simule aucune récupération d’animation.
 tui-script-permissions-unsupported = Un script demande des permissions. Ce client ne peut pas encore y répondre ; rien n’a été accordé. /diagnostics affiche les bits de permissions demandés.
 tui-script-dialog-unsupported = Un script a ouvert une boîte de dialogue ou de saisie. Ce client ne peut pas encore y répondre. /diagnostics confirme sa réception ; aucune réponse n’a été envoyée.
 tui-demo-object-message = Ceci est un IM d’objet simulé, affiché dans Local sans ouvrir d’IM avec son propriétaire.

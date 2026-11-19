@@ -100,6 +100,7 @@ fn demo_command(model: &mut Model, command: Command) {
             text,
         }),
         Command::Diagnostics => model.event(Event::Diagnostics(vec!["mode=offline_demo simulated=true".into()])),
+        Command::FinishAnimation => model.notice(tr!("tui-finishanim-demo")),
         Command::Logout => {}
     }
 }
@@ -363,6 +364,12 @@ mod tests {
             model
                 .format_entry(model.active().lines.back().unwrap())
                 .contains("mode=offline_demo simulated=true")
+        );
+        demo_command(&mut model, Command::FinishAnimation);
+        assert!(
+            model
+                .format_entry(model.active().lines.back().unwrap())
+                .contains(&*tr!("tui-finishanim-demo"))
         );
     }
 

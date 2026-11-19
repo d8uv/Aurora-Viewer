@@ -16060,6 +16060,7 @@ tui-help =
     /whisper <text>, /shout <text> — speak in Local
     /me <action> — send an action; //text — send a literal slash
     /diagnostics — show a sanitized protocol snapshot for troubleshooting HUDs and animations
+    /finishanim — manually request completion of observed built-in self transitions only; never custom animations
     PageUp / PageDown — scroll; Ctrl-U — clear input
     /quit, Ctrl-C or Esc — log out and exit
 tui-login-required = Enter your account name and password. Neither is saved.
@@ -16113,6 +16114,9 @@ tui-channel-sent = Sent on channel { $channel }: { $text }
 tui-list-page = Page { $page }/{ $pages }
 tui-list-page-usage = Use /friends [page] or /radar [page] with a valid page number. Each page contains at most 100 residents.
 tui-diagnostics-intro = Diagnostic snapshot: no names, IDs, locations or chat text. Copy the following protocol counters, not your chat history. Packet acknowledgments do not confirm that a script ran.
+tui-finishanim-none = No built-in self transition is currently reported. Nothing was sent.
+tui-finishanim-requested = Requested completion of built-in transitions: { $count }. No custom animations were stopped. Run /diagnostics again to check the simulator's state.
+tui-finishanim-demo = Offline demo: /finishanim sends nothing and simulates no animation recovery.
 tui-script-permissions-unsupported = A script requested permissions. This client cannot answer permission requests yet; nothing was granted. Use /diagnostics to inspect the requested permission bits.
 tui-script-dialog-unsupported = A script opened a dialog or text box. This client cannot answer it yet. Use /diagnostics to confirm receipt; no reply was sent.
 tui-demo-object-message = This is a simulated object instant message, shown in Local without opening an IM to its owner.

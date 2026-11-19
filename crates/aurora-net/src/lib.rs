@@ -3,6 +3,7 @@
 pub mod caps;
 pub mod circuit;
 mod circuit_socket;
+pub mod control;
 pub mod login;
 pub mod message_split;
 mod packet_loss;

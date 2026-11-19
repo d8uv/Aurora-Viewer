@@ -44,6 +44,7 @@ pub enum Command {
     Group { id: Uuid, text: String },
     Direct { id: Uuid, text: String },
     Diagnostics,
+    FinishAnimation,
     Logout,
 }
 
@@ -163,7 +164,7 @@ impl Session {
         self.send(&throttle, true);
     }
 
-    fn agent_update(&mut self) {
+    fn agent_update(&mut self, control_flags: u32) {
         let mut m = AgentUpdate::default();
         let a = &mut m.agent_data;
         a.agent_id = self.login.agent_id;
@@ -175,7 +176,8 @@ impl Session {
         a.camera_left_axis = Vec3::Y;
         a.camera_up_axis = Vec3::Z;
         a.far = 0.0;
-        self.send(&m, false);
+        a.control_flags = control_flags;
+        self.send(&m, control_flags != 0);
     }
 
     fn remember_groups(&mut self, groups: Vec<GroupMembership>) -> Result<(), Error> {
@@ -224,7 +226,7 @@ impl Session {
                 groups.agent_data.agent_id = self.login.agent_id;
                 groups.agent_data.session_id = self.login.session_id;
                 self.send(&groups, true);
-                self.agent_update();
+                self.agent_update(0);
             }
         } else if p.id == AgentGroupDataUpdate::ID {
             let m: AgentGroupDataUpdate = p.decode().map_err(decode)?;
@@ -383,6 +385,36 @@ impl Session {
             return self.emit(Event::Notice(tr!("tui-send-busy").into())).map(|()| false);
         }
         match command {
+            Command::FinishAnimation => {
+                if !self.arrived {
+                    self.emit(Event::Notice(tr!("tui-connecting").into()))?;
+                } else {
+                    let animation_list: Vec<_> = self
+                        .diagnostics
+                        .transition_ids()
+                        .map(|anim_id| agent_animation::AnimationList {
+                            anim_id,
+                            start_anim: false,
+                        })
+                        .collect();
+                    if animation_list.is_empty() {
+                        self.emit(Event::Notice(tr!("tui-finishanim-none").into()))?;
+                    } else {
+                        // LLAgent::requestStopMotion / onAnimStop (llagent.cpp).
+                        // Explicit headless recovery, not playback completion:
+                        // only observed built-in self transitions, never AO assets.
+                        let count = animation_list.len();
+                        let mut message = AgentAnimation::default();
+                        message.agent_data.agent_id = self.login.agent_id;
+                        message.agent_data.session_id = self.login.session_id;
+                        message.animation_list = animation_list;
+                        self.send(&message, true);
+                        self.agent_update(crate::control::FINISH_ANIM);
+                        self.diagnostics.transition_finish_requested();
+                        self.emit(Event::Notice(tr!("tui-finishanim-requested", count = count)))?;
+                    }
+                }
+            }
             Command::Join(id) => {
                 if !self.groups.contains_key(&id) {
                     self.emit(Event::Notice(tr!("tui-not-member").into()))?;
@@ -805,7 +837,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                     return Err(Error::Session(tr!("tui-connection-timeout").into()));
                 }
                 if logout.is_none() && s.arrived && update.elapsed() >= Duration::from_secs(1) {
-                    s.agent_update();
+                    s.agent_update(0);
                     update = Instant::now();
                 }
                 if ping.elapsed() >= Duration::from_secs(5) {
@@ -947,7 +979,7 @@ mod tests {
         let rates: Vec<_> = bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
         assert_eq!(rates, [8000.0, 0.0, 0.0, 0.0, 16000.0, 0.0, 0.0]);
         session.position = Vec3::new(1.0, 2.0, 3.0);
-        session.agent_update();
+        session.agent_update(0);
         let update = packet(&simulator).await.decode::<AgentUpdate>().unwrap();
         assert_eq!(update.agent_data.far, 0.0);
         assert_eq!(update.agent_data.camera_center, session.position);
@@ -1246,6 +1278,117 @@ mod tests {
             0,
             "object IMs must never trigger automatic replies"
         );
+    }
+
+    #[tokio::test]
+    async fn chat_finishanim_requests_only_observed_builtin_self_transitions_once() {
+        let (mut session, mut events, simulator) = fixture().await;
+        session.arrived = true;
+        let builtins = [
+            0x3da1d753_028a_5446_24f3_9c9b856d9422,
+            0x7a4e87fe_de39_6fcb_6223_024b00893244,
+            0x7a17b059_12b2_41b1_570a_186368b6aa6f,
+            0xf4f00d6e_b9fe_9292_f4cb_0ae06ea58d57,
+        ]
+        .map(Uuid::from_u128);
+        let mut animation = AvatarAnimation::default();
+        animation.sender.id = session.login.agent_id;
+        for id in builtins.into_iter().chain([builtins[0], Uuid::from_u128(123456)]) {
+            animation.animation_list.push(avatar_animation::AnimationList {
+                anim_id: id,
+                anim_sequence_id: 1,
+            });
+        }
+        session.received(&incoming(&animation)).unwrap();
+        assert_eq!(session.stats.snapshot().packets_out, 0, "observing is not automatic recovery");
+        session.command(Command::FinishAnimation).unwrap();
+        let stop_packet = packet(&simulator).await;
+        assert_ne!(stop_packet.flags & aurora_msg::PacketFlags::RELIABLE, 0);
+        let stop = stop_packet.decode::<AgentAnimation>().unwrap();
+        assert_eq!(stop.agent_data.agent_id, session.login.agent_id);
+        assert_eq!(stop.agent_data.session_id, session.login.session_id);
+        assert_eq!(stop.animation_list.len(), 4);
+        assert!(stop.physical_avatar_event_list.is_empty());
+        for (request, expected) in stop.animation_list.iter().zip(builtins) {
+            assert_eq!(request.anim_id, expected);
+            assert!(!request.start_anim);
+        }
+        let finish_packet = packet(&simulator).await;
+        assert_ne!(finish_packet.flags & aurora_msg::PacketFlags::RELIABLE, 0);
+        let finish = finish_packet.decode::<AgentUpdate>().unwrap();
+        assert_eq!(finish.agent_data.agent_id, session.login.agent_id);
+        assert_eq!(finish.agent_data.session_id, session.login.session_id);
+        assert_eq!(finish.agent_data.control_flags, crate::control::FINISH_ANIM);
+        assert_eq!(finish.agent_data.far, 0.0);
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-requested", count = 4)));
+        assert!(
+            session
+                .diagnostic_report()
+                .iter()
+                .any(|line| line == "transition_finish_requests=1 automatic_animation_completion=disabled")
+        );
+        session.agent_update(0);
+        let ordinary = packet(&simulator).await;
+        assert_eq!(ordinary.flags & aurora_msg::PacketFlags::RELIABLE, 0);
+        assert_eq!(ordinary.decode::<AgentUpdate>().unwrap().agent_data.control_flags, 0);
+        assert_eq!(session.stats.snapshot().packets_out, 3);
+    }
+
+    #[tokio::test]
+    async fn chat_finishanim_never_stops_custom_foreign_or_no_longer_reported_transitions() {
+        let (mut session, mut events, _) = fixture().await;
+        session.arrived = true;
+        session.command(Command::FinishAnimation).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-none")));
+        let mut animation = AvatarAnimation::default();
+        animation.sender.id = Uuid::from_u128(999);
+        animation.animation_list.push(avatar_animation::AnimationList {
+            anim_id: Uuid::from_u128(0x7a17b059_12b2_41b1_570a_186368b6aa6f),
+            anim_sequence_id: 1,
+        });
+        session.received(&incoming(&animation)).unwrap();
+        session.command(Command::FinishAnimation).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-none")));
+        animation.sender.id = session.login.agent_id;
+        session.received(&incoming(&animation)).unwrap();
+        animation.animation_list[0].anim_id = Uuid::from_u128(123456);
+        session.received(&incoming(&animation)).unwrap();
+        session.command(Command::FinishAnimation).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-none")));
+        assert_eq!(session.stats.snapshot().packets_out, 0);
+        assert_eq!(session.circuit.unacked_count(), 0);
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_finishanim_requires_arrival_and_respects_reliable_backpressure() {
+        for arrived in [false, true] {
+            let (mut session, mut events, _) = fixture().await;
+            session.arrived = arrived;
+            let mut animation = AvatarAnimation::default();
+            animation.sender.id = session.login.agent_id;
+            animation.animation_list.push(avatar_animation::AnimationList {
+                anim_id: Uuid::from_u128(0x7a17b059_12b2_41b1_570a_186368b6aa6f),
+                anim_sequence_id: 1,
+            });
+            session.received(&incoming(&animation)).unwrap();
+            if arrived {
+                for _ in 0..MAX_PENDING {
+                    session.send(&StartPingCheck::default(), true);
+                }
+            }
+            let before = session.stats.snapshot().packets_out;
+            session.command(Command::FinishAnimation).unwrap();
+            let expected = if arrived { tr!("tui-send-busy") } else { tr!("tui-connecting") };
+            assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == expected));
+            assert_eq!(session.stats.snapshot().packets_out, before);
+            assert!(
+                session
+                    .diagnostic_report()
+                    .iter()
+                    .any(|line| line == "transition_finish_requests=0 automatic_animation_completion=disabled")
+            );
+        }
     }
 
     #[tokio::test]

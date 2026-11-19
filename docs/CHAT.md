@@ -75,6 +75,7 @@ cargo install --path crates/aurora-chat --locked --debug
 | Ctrl-U | Clear input |
 | `/help` | Command reference |
 | `/diagnostics` | Show a sanitized, in-memory protocol snapshot; never sends chat |
+| `/finishanim` | Manually request completion of currently reported built-in self transitions only; never stops custom animations or grants permissions |
 | `/quit`, Ctrl-C or Esc | Request logout, wait for confirmation, restore terminal |
 
 Recipients can be a UUID, a 1-based number from `/friends`, or an exact full
@@ -142,8 +143,24 @@ The client now displays object IMs as well as ordinary object chat. However,
 script dialogs/text boxes and permission prompts are **not implemented**:
 the first of each received in a session produces a notice, and no response or
 permission grant is sent. No HUD touches, keyboard controls, local animation
-playback, AO engine or animation-completion signaling are implemented either.
+playback, AO engine or automatic animation-completion signaling are implemented either.
 An AO or HUD that needs those viewer features may still fail.
+
+For a persistent built-in transition, `/finishanim` is an explicit recovery
+experiment, not automatic playback or an AO implementation. It sends a reliable
+`AgentAnimation` stop for each currently reported built-in self transition
+(`land`, `medium_land`, `standup`, `prejump`) and one reliable `AgentUpdate`
+with `FINISH_ANIM`, following `LLAgent::requestStopMotion` / `onAnimStop`
+(`indra/newview/llagent.cpp`). Ordinary updates continue with zero control flags.
+This intentionally differs from the Legacy Viewer, which waits for playback
+completion: use it only to clear a transition that appears stuck. No animation
+asset is fetched; custom/AO animations are never stopped. Without a matching
+self transition, nothing is sent and a notice explains why.
+
+After `/finishanim`, wait a few seconds and run `/diagnostics` again, then retry
+the HUD command. A request notice is **not** confirmation that the simulator
+cleared the state or that a HUD recovered. In offline demo mode the command
+explicitly reports that no recovery was performed.
 
 Use `/diagnostics` for a targeted report during **your own** login:
 
@@ -179,6 +196,10 @@ machine-readable form in every UI language.
   `prejump`, `land` and `medium_land` states that ordinarily wait for viewer
   animation completion; it never exposes arbitrary asset IDs. No animation
   packet yet is different from a received packet with zero animations.
+- `transition_finish_requests` counts explicit recovery requests sent;
+  `automatic_animation_completion=disabled` confirms there is no timer or
+  blanket completion flag. The latest simulator animation state is not cleared
+  locally when a request is sent.
 
 This is preferable to sharing a full viewer log or packet capture. In the
 graphical Aurora Viewer, use Dev Toolbox **J7** (Script errors) to check script
@@ -249,12 +270,15 @@ script-request visibility, diagnostic privacy/bounds and chat-only throttles.
 Shared login, TLS, reliable-circuit and event-queue tests remain applicable.
 
 The standalone build, strict lean-workspace and combined viewer/chat-network
-clippy checks, 242 selected workspace tests and nine full-catalog integration
+clippy checks, 245 selected workspace tests and nine full-catalog integration
 tests pass. Timestamp tests include winter, summer and both daylight-saving
 transitions; a pseudo-terminal test confirmed SLT output with UTC, Tokyo and
 Los Angeles host timezones. English, French and Japanese terminal checks confirm
-object-message display and `/diagnostics` in Local and direct buffers. The HUD
-follow-up changes no dependencies or licence notices.
+object-message display, `/diagnostics` and the explicitly simulated `/finishanim`
+notice in Local and direct buffers. Recovery packet tests cover every supported
+built-in transition, duplicate/custom/foreign/removed animations, one-shot flags,
+arrival checks and reliable backpressure. Live recovery has not been validated.
+The HUD follow-up changes no dependencies or licence notices.
 A pseudo-terminal check verifies actual Local/group/direct output, channel
 isolation, friends, radar, full-name recipients, switching, bracketed paste,
 resizing, quitting and restoration of terminal modes.
