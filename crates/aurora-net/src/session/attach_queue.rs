@@ -16,8 +16,10 @@
 //! outfit change on a busy region take two minutes. The Legacy Viewer has
 //! no such limit and loses objects the same way now and then.
 
-use super::*;
-use std::collections::VecDeque;
+use crate::outfit_restore::AttachRequest;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 /// Shortest gap between two requests.
 const SPACING: Duration = Duration::from_millis(50);
@@ -184,39 +186,12 @@ impl AttachQueue {
 }
 
 /// The item an object is worn from (its `AttachItemID` name-value).
-fn attach_item_id(name_values: &str) -> Option<Uuid> {
+pub(super) fn attach_item_id(name_values: &str) -> Option<Uuid> {
     name_values
         .lines()
         .find(|l| l.starts_with("AttachItemID"))
         .and_then(|l| l.split_whitespace().last())
         .and_then(|id| id.parse().ok())
-}
-
-impl Session<'_> {
-    /// Sends the next queued attachment request when its turn has come.
-    pub(super) fn send_queued_attachment(&mut self, now: Instant) {
-        let Some(a) = self.attach_queue.next(now) else {
-            return;
-        };
-        let mut m = RezMultipleAttachmentsFromInv::default();
-        m.agent_data.agent_id = self.agent_id();
-        m.agent_data.session_id = self.session_id();
-        m.header_data.compound_msg_id = uuid::Uuid::new_v4();
-        m.header_data.total_objects = 1;
-        m.header_data.first_detach_all = false;
-        m.object_data = vec![rez_multiple_attachments_from_inv::ObjectData {
-            item_id: a.item_id,
-            owner_id: a.owner_id,
-            attachment_pt: a.point | if a.add { 0x80 } else { 0 },
-            item_flags: a.flags,
-            group_mask: a.group_mask,
-            everyone_mask: a.everyone_mask,
-            next_owner_mask: a.next_owner_mask,
-            name: str_field(&a.name),
-            description: str_field(&a.desc),
-        }];
-        self.send_main(&m, true);
-    }
 }
 
 #[cfg(test)]

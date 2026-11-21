@@ -1,11 +1,20 @@
 //! Shared login and simulator transport, with independent viewer and chat clients.
 
+#[cfg(any(feature = "viewer", feature = "chat"))]
+#[path = "session/attach_queue.rs"]
+mod attach_queue;
 pub mod caps;
 pub mod circuit;
 mod circuit_socket;
 pub mod control;
+#[cfg(any(feature = "viewer", feature = "chat"))]
+pub mod inventory;
 pub mod login;
 pub mod message_split;
+#[cfg(any(feature = "viewer", feature = "chat"))]
+mod object_header;
+#[cfg(any(feature = "viewer", feature = "chat"))]
+pub mod outfit_restore;
 mod packet_loss;
 pub mod probe;
 mod sim_tls;

@@ -2,10 +2,12 @@
 //! handshake (llstartup.cpp), LLIMModel::sendStartSession (llimview.cpp)
 //! and really_send_chat_from_viewer (fsnearbychathub.cpp).
 //!
-//! No world model, asset fetcher, inventory, appearance, neighbours or media.
+//! No world model, asset fetcher, graphical inventory, appearance or media.
+//! Inventory reads restore worn attachments without downloading their assets.
 //! Task traffic cannot be disabled: the simulator also sends chat on it.
 
 mod diagnostics;
+mod outfit;
 mod people;
 pub use people::{Friend, MAX_RESIDENTS, Nearby, ResidentName};
 
@@ -33,8 +35,26 @@ pub const MAX_SESSIONS: usize = 64;
 pub const MAX_INPUT_BYTES: usize = 4096;
 const MAX_PENDING: usize = 128;
 const CHAT_THROTTLES: [f32; 7] = [8000.0, 0.0, 0.0, 0.0, 16000.0, 0.0, 0.0];
-const CHAT_CAPS: &[&str] = &["EventQueueGet", "ChatSessionRequest", "GetDisplayNames"];
-const CHAT_OPTIONS: &[&str] = &["login-flags", "max-agent-groups", "adult_compliant", "buddy-list"];
+const RADAR_DRAW_DISTANCE: f32 = 32.0;
+// LLViewerRegion::sendRegionHandshakeReply: request our own appearance
+// packet for its attachment list, without requesting assets or an object cache.
+const SUPPORTS_SELF_APPEARANCE: u32 = 0x4;
+const CHAT_CAPS: &[&str] = &[
+    "EventQueueGet",
+    "ChatSessionRequest",
+    "GetDisplayNames",
+    "InventoryAPIv3",
+    "FetchInventoryDescendents2",
+    "FetchInventory2",
+];
+const CHAT_OPTIONS: &[&str] = &[
+    "login-flags",
+    "max-agent-groups",
+    "adult_compliant",
+    "buddy-list",
+    "inventory-root",
+    "inventory-skeleton",
+];
 
 #[derive(Debug)]
 pub enum Command {
@@ -105,6 +125,7 @@ struct Session {
     sent: BTreeMap<u32, Sent>,
     people: people::People,
     diagnostics: diagnostics::State,
+    outfit: outfit::Restore,
     position: Vec3,
     arrived: bool,
     logged_out: bool,
@@ -159,7 +180,7 @@ impl Session {
         throttle.agent_data.session_id = self.login.session_id;
         throttle.agent_data.circuit_code = self.login.circuit_code;
         // Deliberate chat-only difference from LLViewerThrottle: no world
-        // channels; a small Task allowance retains chat and control traffic.
+        // asset channels; a small Task allowance retains chat and nearby updates.
         throttle.throttle.throttles = CHAT_THROTTLES.into_iter().flat_map(f32::to_le_bytes).collect();
         self.send(&throttle, true);
     }
@@ -175,9 +196,43 @@ impl Session {
         a.camera_at_axis = Vec3::X;
         a.camera_left_axis = Vec3::Y;
         a.camera_up_axis = Vec3::Z;
-        a.far = 0.0;
+        a.far = RADAR_DRAW_DISTANCE;
         a.control_flags = control_flags;
         self.send(&m, control_flags != 0);
+    }
+
+    fn finish_transitions(&mut self, ids: Vec<Uuid>, automatic: bool) {
+        if ids.is_empty() {
+            return;
+        }
+        let animation_list = ids
+            .iter()
+            .copied()
+            .map(|anim_id| agent_animation::AnimationList {
+                anim_id,
+                start_anim: false,
+            })
+            .collect();
+        let mut message = AgentAnimation::default();
+        message.agent_data.agent_id = self.login.agent_id;
+        message.agent_data.session_id = self.login.session_id;
+        message.animation_list = animation_list;
+        self.send(&message, true);
+        self.agent_update(crate::control::FINISH_ANIM);
+        self.diagnostics.transition_finish_requested(&ids, automatic);
+    }
+
+    fn finish_pending_transitions(&mut self) {
+        if !self.arrived || self.circuit.unacked_count() > MAX_PENDING - 8 {
+            return;
+        }
+        let ids: Vec<_> = self.diagnostics.pending_automatic_transition_ids().collect();
+        if !ids.is_empty() {
+            // The chat client has no animation assets or playback clock.
+            // Complete only reported built-in transitions, using the same
+            // stop request as LLAgent::requestStopMotion / onAnimStop.
+            self.finish_transitions(ids, true);
+        }
     }
 
     fn remember_groups(&mut self, groups: Vec<GroupMembership>) -> Result<(), Error> {
@@ -213,6 +268,7 @@ impl Session {
             let mut reply = RegionHandshakeReply::default();
             reply.agent_data.agent_id = self.login.agent_id;
             reply.agent_data.session_id = self.login.session_id;
+            reply.region_info.flags = SUPPORTS_SELF_APPEARANCE;
             self.send(&reply, true);
         } else if p.id == AgentMovementComplete::ID {
             let m: AgentMovementComplete = p.decode().map_err(decode)?;
@@ -222,6 +278,7 @@ impl Session {
             self.position = m.data.position;
             if !self.arrived {
                 self.arrived = true;
+                self.outfit.arrived(Instant::now());
                 let mut groups = AgentDataUpdateRequest::default();
                 groups.agent_data.agent_id = self.login.agent_id;
                 groups.agent_data.session_id = self.login.session_id;
@@ -323,24 +380,64 @@ impl Session {
         } else if p.id == ScriptControlChange::ID {
             let m: ScriptControlChange = p.decode().map_err(decode)?;
             self.diagnostics.script_controls(&m);
+        } else if p.id == AvatarAppearance::ID {
+            if p.body.starts_with(self.login.agent_id.as_bytes()) {
+                match p.decode::<AvatarAppearance>() {
+                    Ok(m) => self.diagnostics.self_attachment_snapshot(&m),
+                    Err(e) => log::debug!("chat: ignoring invalid avatar appearance: {e}"),
+                }
+            }
         } else if p.id == AvatarAnimation::ID {
             // Sender.ID is the leading UUID; leave other avatars' animation
             // lists undecoded, just like their other world updates.
             if p.body.starts_with(self.login.agent_id.as_bytes()) {
                 let m: AvatarAnimation = p.decode().map_err(decode)?;
                 self.diagnostics.self_animations(&m);
+                self.finish_pending_transitions();
             }
         } else if p.id == AlertMessage::ID {
             let m: AlertMessage = p.decode().map_err(decode)?;
-            self.emit(Event::Notice(field_str(&m.alert_data.message)))?;
+            let text = field_str(&m.alert_data.message);
+            self.outfit.alert(&text);
+            self.emit(Event::Notice(text))?;
         } else if p.id == AgentAlertMessage::ID {
             let m: AgentAlertMessage = p.decode().map_err(decode)?;
             if m.agent_data.agent_id == self.login.agent_id {
-                self.emit(Event::Notice(field_str(&m.alert_data.message)))?;
+                let text = field_str(&m.alert_data.message);
+                self.outfit.alert(&text);
+                self.emit(Event::Notice(text))?;
             }
         } else if p.id == CoarseLocationUpdate::ID {
             let m: CoarseLocationUpdate = p.decode().map_err(decode)?;
             self.coarse_locations(&m)?;
+        } else if p.id == ObjectUpdate::ID {
+            match p.decode::<ObjectUpdate>() {
+                Ok(m) => {
+                    self.avatar_positions(&m);
+                    self.outfit_full(&m);
+                }
+                Err(e) => log::debug!("chat: ignoring invalid object update: {e}"),
+            }
+        } else if p.id == ObjectUpdateCompressed::ID {
+            match p.decode::<ObjectUpdateCompressed>() {
+                Ok(m) => self.outfit_compressed(&m),
+                Err(e) => log::debug!("chat: ignoring invalid compressed object update: {e}"),
+            }
+        } else if p.id == ImprovedTerseObjectUpdate::ID {
+            match p.decode::<ImprovedTerseObjectUpdate>() {
+                Ok(m) => self.terse_positions(&m),
+                Err(e) => log::debug!("chat: ignoring invalid terse object update: {e}"),
+            }
+        } else if p.id == KillObject::ID {
+            match p.decode::<KillObject>() {
+                Ok(m) => {
+                    self.outfit_kill(&m);
+                    for block in m.object_data {
+                        self.forget_avatar_position(block.id);
+                    }
+                }
+                Err(e) => log::debug!("chat: ignoring invalid kill-object update: {e}"),
+            }
         } else if p.id == UUIDNameReply::ID {
             let m: UUIDNameReply = p.decode().map_err(decode)?;
             for b in m.uuid_name_block {
@@ -389,28 +486,13 @@ impl Session {
                 if !self.arrived {
                     self.emit(Event::Notice(tr!("tui-connecting").into()))?;
                 } else {
-                    let animation_list: Vec<_> = self
-                        .diagnostics
-                        .transition_ids()
-                        .map(|anim_id| agent_animation::AnimationList {
-                            anim_id,
-                            start_anim: false,
-                        })
-                        .collect();
+                    let animation_list: Vec<_> = self.diagnostics.transition_ids().collect();
                     if animation_list.is_empty() {
                         self.emit(Event::Notice(tr!("tui-finishanim-none").into()))?;
                     } else {
                         // LLAgent::requestStopMotion / onAnimStop (llagent.cpp).
-                        // Explicit headless recovery, not playback completion:
-                        // only observed built-in self transitions, never AO assets.
                         let count = animation_list.len();
-                        let mut message = AgentAnimation::default();
-                        message.agent_data.agent_id = self.login.agent_id;
-                        message.agent_data.session_id = self.login.session_id;
-                        message.animation_list = animation_list;
-                        self.send(&message, true);
-                        self.agent_update(crate::control::FINISH_ANIM);
-                        self.diagnostics.transition_finish_requested();
+                        self.finish_transitions(animation_list, false);
                         self.emit(Event::Notice(tr!("tui-finishanim-requested", count = count)))?;
                     }
                 }
@@ -588,6 +670,7 @@ fn valid_text(text: &str) -> bool {
 
 enum Job {
     QueueEnded,
+    Outfit(Result<Vec<crate::inventory::InvItem>, &'static str>),
     Names {
         ids: Vec<Uuid>,
         result: Result<Vec<social::AvatarNameData>, caps::CapsError>,
@@ -629,6 +712,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
     drop(req);
     let seed_url = std::mem::take(&mut login.seed_capability);
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
+    let outfit = outfit::Restore::from_login(&login);
     let mut s = Session {
         login,
         socket: CircuitSocket::direct(socket.clone()),
@@ -643,6 +727,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
         sent: BTreeMap::new(),
         people: people::People::default(),
         diagnostics: diagnostics::State::default(),
+        outfit,
         position: Vec3::ZERO,
         arrived: false,
         logged_out: false,
@@ -745,6 +830,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
             Some(result) = jobs.join_next(), if !jobs.is_empty() => {
                 match result.map_err(|e| Error::Session(e.to_string()))? {
                     Job::QueueEnded => return Err(Error::Session(tr!("tui-queue-lost").into())),
+                    Job::Outfit(result) => s.outfit.fetched(result),
                     Job::Names { ids, result } => {
                         s.people.lookup_active = false;
                         match result {
@@ -791,6 +877,7 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                 if !s.circuit.take_dropped().is_empty() {
                     return Err(Error::Session(tr!("tui-delivery-failed").into()));
                 }
+                s.finish_pending_transitions();
                 if !movement_sent && !s.circuit.is_unacked(seq) {
                     movement_sent = true;
                     s.complete_movement();
@@ -803,6 +890,32 @@ pub async fn run(req: LoginRequest, events: mpsc::Sender<Event>, mut commands: m
                     request.agent_data.agent_id = s.login.agent_id;
                     request.agent_data.session_id = s.login.session_id;
                     s.send(&request, true);
+                }
+                if logout.is_none() && announced && !s.outfit.started {
+                    s.outfit.started = true;
+                    if let Some(cof) = s.outfit.cof.filter(|_| !s.outfit.first_login) {
+                        if let Some(caps) = capabilities.clone() {
+                            let http = http.clone();
+                            let agent = s.login.agent_id;
+                            s.outfit.fetching = true;
+                            jobs.spawn(async move { Job::Outfit(outfit::fetch(&http, &caps, cof, agent).await) });
+                        }
+                    } else {
+                        s.outfit.failed = true;
+                    }
+                }
+                if logout.is_none() && s.outfit.refresh_needed && !s.outfit.fetching {
+                    if let (Some(cof), Some(caps)) = (s.outfit.cof, capabilities.clone()) {
+                        let http = http.clone();
+                        let agent = s.login.agent_id;
+                        s.outfit.fetching = true;
+                        jobs.spawn(async move { Job::Outfit(outfit::fetch(&http, &caps, cof, agent).await) });
+                    } else {
+                        s.outfit.failed = true;
+                    }
+                }
+                if logout.is_none() {
+                    s.outfit_tick(Instant::now())?;
                 }
                 s.acknowledged()?;
                 s.expire_nearby()?;
@@ -914,6 +1027,7 @@ mod tests {
             sent: BTreeMap::new(),
             people: people::People::default(),
             diagnostics: diagnostics::State::default(),
+            outfit: outfit::Restore::default(),
             position: Vec3::ZERO,
             arrived: false,
             logged_out: true,
@@ -930,7 +1044,7 @@ mod tests {
         parse_packet(&bytes[..n]).unwrap()
     }
 
-    fn incoming(message: &impl Msg) -> IncomingPacket {
+    pub(super) fn incoming(message: &impl Msg) -> IncomingPacket {
         let mut bytes = Vec::new();
         aurora_msg::build_packet(message, 1, true, false, &[], &mut bytes);
         parse_packet(&bytes).unwrap()
@@ -961,13 +1075,15 @@ mod tests {
     }
 
     #[test]
-    fn chat_requests_no_world_or_media_capabilities() {
-        assert_eq!(CHAT_CAPS, ["EventQueueGet", "ChatSessionRequest", "GetDisplayNames"]);
-        assert!(!CHAT_OPTIONS.iter().any(|name| name.contains("inventory") || name.contains("voice")));
+    fn chat_requests_inventory_without_media_capabilities() {
+        assert!(CHAT_CAPS.contains(&"InventoryAPIv3"));
+        assert!(CHAT_CAPS.contains(&"FetchInventory2"));
+        assert!(CHAT_OPTIONS.contains(&"inventory-skeleton"));
+        assert!(!CHAT_OPTIONS.iter().any(|name| name.contains("voice")));
     }
 
     #[tokio::test]
-    async fn chat_handshake_sets_zero_world_channels_and_zero_draw_distance() {
+    async fn chat_handshake_keeps_asset_channels_disabled_and_requests_short_range_updates() {
         let (mut session, _, simulator) = fixture().await;
         session.complete_movement();
         let movement = packet(&simulator).await.decode::<CompleteAgentMovement>().unwrap();
@@ -981,9 +1097,33 @@ mod tests {
         session.position = Vec3::new(1.0, 2.0, 3.0);
         session.agent_update(0);
         let update = packet(&simulator).await.decode::<AgentUpdate>().unwrap();
-        assert_eq!(update.agent_data.far, 0.0);
+        assert_eq!(update.agent_data.far, 32.0);
         assert_eq!(update.agent_data.camera_center, session.position);
         assert_eq!(update.agent_data.control_flags, 0);
+    }
+
+    #[tokio::test]
+    async fn chat_reports_only_our_listed_hud_attachments_without_ids() {
+        let (mut session, _, simulator) = fixture().await;
+        session.received(&incoming(&RegionHandshake::default())).unwrap();
+        let reply = packet(&simulator).await.decode::<RegionHandshakeReply>().unwrap();
+        assert_eq!(reply.region_info.flags, SUPPORTS_SELF_APPEARANCE);
+
+        let id = Uuid::from_u128(42);
+        let mut appearance = AvatarAppearance::default();
+        appearance.sender.id = Uuid::from_u128(43);
+        for (id, attachment_point) in [(id, 31), (id, 32), (Uuid::nil(), 32), (Uuid::from_u128(44), 5)] {
+            appearance
+                .attachment_block
+                .push(avatar_appearance::AttachmentBlock { id, attachment_point });
+        }
+        session.received(&incoming(&appearance)).unwrap();
+        assert!(session.diagnostic_report().iter().any(|line| line == "self_hud_points: unknown"));
+        appearance.sender.id = session.login.agent_id;
+        session.received(&incoming(&appearance)).unwrap();
+        let report = session.diagnostic_report().join("\n");
+        assert!(report.contains("self_hud_points: 31=0,32=1,33=0,34=0,35=0,36=0,37=0,38=0"));
+        assert!(!report.contains(&id.to_string()));
     }
 
     #[tokio::test]
@@ -1043,7 +1183,10 @@ mod tests {
         let mut packet = incoming(&message);
         packet.id = ObjectUpdate::ID;
         packet.body.clear();
-        assert!(!session.received(&packet).unwrap(), "world payloads must not be decoded");
+        assert!(
+            !session.received(&packet).unwrap(),
+            "invalid world payloads must not end the session"
+        );
     }
 
     #[tokio::test]
@@ -1283,7 +1426,8 @@ mod tests {
     #[tokio::test]
     async fn chat_finishanim_requests_only_observed_builtin_self_transitions_once() {
         let (mut session, mut events, simulator) = fixture().await;
-        session.arrived = true;
+        // Keep this test on the manual fallback path.
+        session.arrived = false;
         let builtins = [
             0x3da1d753_028a_5446_24f3_9c9b856d9422,
             0x7a4e87fe_de39_6fcb_6223_024b00893244,
@@ -1301,6 +1445,7 @@ mod tests {
         }
         session.received(&incoming(&animation)).unwrap();
         assert_eq!(session.stats.snapshot().packets_out, 0, "observing is not automatic recovery");
+        session.arrived = true;
         session.command(Command::FinishAnimation).unwrap();
         let stop_packet = packet(&simulator).await;
         assert_ne!(stop_packet.flags & aurora_msg::PacketFlags::RELIABLE, 0);
@@ -1319,19 +1464,70 @@ mod tests {
         assert_eq!(finish.agent_data.agent_id, session.login.agent_id);
         assert_eq!(finish.agent_data.session_id, session.login.session_id);
         assert_eq!(finish.agent_data.control_flags, crate::control::FINISH_ANIM);
-        assert_eq!(finish.agent_data.far, 0.0);
+        assert_eq!(finish.agent_data.far, RADAR_DRAW_DISTANCE);
         assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-requested", count = 4)));
-        assert!(
-            session
-                .diagnostic_report()
-                .iter()
-                .any(|line| line == "transition_finish_requests=1 automatic_animation_completion=disabled")
-        );
+        assert!(session.diagnostic_report().iter().any(|line| line
+            == "transition_finish_requests=1 automatic_transition_finish_requests=0 automatic_animation_completion=builtins_only"));
         session.agent_update(0);
         let ordinary = packet(&simulator).await;
         assert_eq!(ordinary.flags & aurora_msg::PacketFlags::RELIABLE, 0);
         assert_eq!(ordinary.decode::<AgentUpdate>().unwrap().agent_data.control_flags, 0);
         assert_eq!(session.stats.snapshot().packets_out, 3);
+    }
+
+    #[tokio::test]
+    async fn chat_automatically_finishes_reported_builtin_self_transitions_once() {
+        let (mut session, mut events, simulator) = fixture().await;
+        session.arrived = true;
+        let builtins = [
+            0x3da1d753_028a_5446_24f3_9c9b856d9422,
+            0x7a4e87fe_de39_6fcb_6223_024b00893244,
+            0x7a17b059_12b2_41b1_570a_186368b6aa6f,
+            0xf4f00d6e_b9fe_9292_f4cb_0ae06ea58d57,
+        ]
+        .map(Uuid::from_u128);
+        let mut animation = AvatarAnimation::default();
+        animation.sender.id = session.login.agent_id;
+        for id in builtins.into_iter().chain([Uuid::from_u128(123456)]) {
+            animation.animation_list.push(avatar_animation::AnimationList {
+                anim_id: id,
+                anim_sequence_id: 1,
+            });
+        }
+
+        session.received(&incoming(&animation)).unwrap();
+        let stop_packet = packet(&simulator).await;
+        assert_ne!(stop_packet.flags & aurora_msg::PacketFlags::RELIABLE, 0);
+        let stop = stop_packet.decode::<AgentAnimation>().unwrap();
+        assert_eq!(stop.animation_list.len(), 4);
+        for (request, expected) in stop.animation_list.iter().zip(builtins) {
+            assert_eq!(request.anim_id, expected);
+            assert!(!request.start_anim);
+        }
+        let finish = packet(&simulator).await.decode::<AgentUpdate>().unwrap();
+        assert_eq!(finish.agent_data.control_flags, crate::control::FINISH_ANIM);
+        assert!(matches!(events.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+
+        session.received(&incoming(&animation)).unwrap();
+        assert_eq!(
+            session.stats.snapshot().packets_out,
+            2,
+            "repeated state must not resend automatically"
+        );
+        assert!(session.diagnostic_report().iter().any(|line| line
+            == "transition_finish_requests=1 automatic_transition_finish_requests=1 automatic_animation_completion=builtins_only"));
+
+        session.command(Command::FinishAnimation).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-requested", count = 4)));
+        assert_eq!(
+            packet(&simulator).await.decode::<AgentAnimation>().unwrap().animation_list.len(),
+            4,
+            "manual recovery remains available while the server still reports the transition"
+        );
+        assert_eq!(
+            packet(&simulator).await.decode::<AgentUpdate>().unwrap().agent_data.control_flags,
+            crate::control::FINISH_ANIM
+        );
     }
 
     #[tokio::test]
@@ -1350,9 +1546,13 @@ mod tests {
         session.command(Command::FinishAnimation).unwrap();
         assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-none")));
         animation.sender.id = session.login.agent_id;
+        // The transition appears and clears before this session can signal it.
+        session.arrived = false;
         session.received(&incoming(&animation)).unwrap();
         animation.animation_list[0].anim_id = Uuid::from_u128(123456);
         session.received(&incoming(&animation)).unwrap();
+        session.arrived = true;
+        session.finish_pending_transitions();
         session.command(Command::FinishAnimation).unwrap();
         assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == tr!("tui-finishanim-none")));
         assert_eq!(session.stats.snapshot().packets_out, 0);
@@ -1364,7 +1564,7 @@ mod tests {
     async fn chat_finishanim_requires_arrival_and_respects_reliable_backpressure() {
         for arrived in [false, true] {
             let (mut session, mut events, _) = fixture().await;
-            session.arrived = arrived;
+            session.arrived = false;
             let mut animation = AvatarAnimation::default();
             animation.sender.id = session.login.agent_id;
             animation.animation_list.push(avatar_animation::AnimationList {
@@ -1372,6 +1572,7 @@ mod tests {
                 anim_sequence_id: 1,
             });
             session.received(&incoming(&animation)).unwrap();
+            session.arrived = arrived;
             if arrived {
                 for _ in 0..MAX_PENDING {
                     session.send(&StartPingCheck::default(), true);
@@ -1382,12 +1583,8 @@ mod tests {
             let expected = if arrived { tr!("tui-send-busy") } else { tr!("tui-connecting") };
             assert!(matches!(events.try_recv(), Ok(Event::Notice(text)) if text == expected));
             assert_eq!(session.stats.snapshot().packets_out, before);
-            assert!(
-                session
-                    .diagnostic_report()
-                    .iter()
-                    .any(|line| line == "transition_finish_requests=0 automatic_animation_completion=disabled")
-            );
+            assert!(session.diagnostic_report().iter().any(|line| line
+                == "transition_finish_requests=0 automatic_transition_finish_requests=0 automatic_animation_completion=builtins_only"));
         }
     }
 

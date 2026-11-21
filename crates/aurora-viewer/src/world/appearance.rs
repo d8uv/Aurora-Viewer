@@ -1100,7 +1100,7 @@ pub fn category_plan(
 /// A coalesced object (II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS): the simulator
 /// refuses to attach it ("You can't attach multiple objects to one spot").
 pub fn coalesced(it: &InvItem) -> bool {
-    it.asset_type == 6 && it.flags & crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS != 0
+    aurora_net::outfit_restore::coalesced(it)
 }
 
 /// The Current Outfit never links a coalesced object. The Legacy Viewer links

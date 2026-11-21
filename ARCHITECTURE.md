@@ -16,15 +16,19 @@ See [Terminal chat](docs/CHAT.md).
 `viewer.rs`, included at the crate root, contains the existing world modules
 and `NetClient`. The independent `chat` feature with default features disabled
 builds `chat.rs` and the shared login, XML-RPC, TLS, message splitting, social
-parsers and reliable UDP machinery, without `aurora-assets` or `aurora-prim`.
-Chat requests only EventQueueGet, ChatSessionRequest and GetDisplayNames. It
-stays in its login region, acknowledges discarded world packets without decoding
-them, and keeps bounded channels and session state. `chat/people.rs` owns the
+and inventory readers and reliable UDP machinery, without `aurora-assets` or
+`aurora-prim`. Chat also requests inventory capabilities to restore the
+Current Outfit Folder's attachments. It stays in its login region, discards
+world data it doesn't use, and keeps
+bounded channels and session state. `chat/people.rs` owns the
 login buddy list, presence, a 4096-entry name cache with batched asynchronous
-lookups and legacy-name fallback, and expiring coarse-location radar snapshots.
-Radar uses no avatar/object model; distances are approximate and unknown when
-coarse altitude is saturated. The People API record parser and coarse-coordinate
-scaling live in shared `social.rs`; the viewer keeps its existing API.
+lookups and legacy-name fallback, and expiring radar snapshots. The radar
+requests a 32 m draw distance and keeps only avatar identities and positions
+from full and terse updates. It falls back to approximate coarse locations,
+with unknown distance when neither source can supply altitude. It does not
+keep a scene or resolve seated avatars' parent-relative transforms. The People
+API record parser and coarse-coordinate scaling live in shared `social.rs`;
+the viewer keeps its existing API.
 Direct IMs use peer IDs and XOR session IDs, offline friend flags and queued
 offline-message retrieval. Script channels remain local simulator messages.
 Object IMs (`IM_FROM_TASK`) and object alerts are shown in Local without
@@ -34,12 +38,17 @@ built-in self-animation transition states, never arbitrary animation IDs.
 `/diagnostics` displays an on-demand in-memory snapshot; it stores no packet
 contents, credentials, names, locations or capability URLs. Script dialogs and
 permission requests produce a one-time unsupported-feature notice, never an
-automatic reply or permission grant. Animation packets are observed without
-fetching assets. Only the explicit `/finishanim` recovery command sends
-animation stops, restricted to currently reported built-in self transitions
-(`standup`, `prejump`, `land`, `medium_land`), plus a one-shot `FINISH_ANIM`
-update. It never stops custom animations or performs automatic completion;
-diagnostics count requests without treating them as successful recovery.
+automatic reply or permission grant. `chat/outfit.rs` reads the current outfit
+and retains bounded object identity, parentage and attachment item IDs during
+login. It uses `outfit_restore.rs` and the viewer's attachment queue, requesting
+missing attachments at their saved point in add mode after the region settles.
+It refreshes the outfit before retrying and does not create an inventory UI or
+load assets. Self appearance supplies diagnostic HUD-point counts only.
+Without fetching animation
+assets, the chat client requests stops for reported built-in self transitions
+(`standup`, `prejump`, `land`, `medium_land`) and sends a one-shot `FINISH_ANIM`
+update. `/finishanim` can retry manually. Custom animations are never
+stopped; diagnostics count requests without treating them as successful recovery.
 `control.rs` shares the existing AgentUpdate bit constants between both clients,
 without enabling the viewer feature in a standalone chat build.
 The event queue has a bounded sender

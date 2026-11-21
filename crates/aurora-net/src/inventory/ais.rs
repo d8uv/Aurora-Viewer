@@ -452,7 +452,7 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
     reads
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "viewer"))]
 mod tests {
     use super::*;
     use crate::inventory::operations::{Mutation, Operation, metadata_favorite, mutate};

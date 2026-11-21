@@ -7,7 +7,6 @@ mod abuse_reports;
 mod account;
 mod appearance_queue;
 mod asset_imports;
-mod attach_queue;
 mod build_cmds;
 mod currency;
 mod estate;
@@ -32,6 +31,7 @@ mod terrain_raw;
 mod wearable_save;
 
 use crate::agent_update::{AgentUpdateRule, FarStep};
+use crate::attach_queue;
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
@@ -58,6 +58,15 @@ use proxy::login_failed;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+impl Session<'_> {
+    fn send_queued_attachment(&mut self, now: Instant) {
+        if let Some(request) = self.attach_queue.next(now) {
+            let message = crate::outfit_restore::attachment_message(request, self.agent_id(), self.session_id());
+            self.send_main(&message, true);
+        }
+    }
+}
 
 /// Mute list, groups and chat sessions.
 #[path = "session_social.rs"]

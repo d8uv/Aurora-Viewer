@@ -341,25 +341,27 @@ pub fn parse_full(b: &msgs::object_update::ObjectData) -> Option<ObjectUpdate> {
 
 /// Decode one `ObjectUpdateCompressed` data blob.
 pub fn parse_compressed(data: &[u8], update_flags: u32) -> Option<ObjectUpdate> {
+    let header = crate::object_header::compressed_header(data)?;
     let mut dp = Dp::new(data);
-    let full_id = dp.uuid()?;
-    let local_id = dp.u32()?;
-    let pcode = dp.u8()?;
-    let state = dp.u8()?;
-    let crc = dp.u32()?;
-    let material = dp.u8()?;
-    let click_action = dp.u8()?;
-    let scale = dp.vec3()?;
-    let position = dp.vec3()?;
-    let rotation = aurora_msg::unpack_quat(dp.vec3()?);
-    let flags = dp.u32()?;
-    let owner_id = dp.uuid()?;
-
-    let mut angular_velocity = Vec3::ZERO;
-    if flags & 0x80 != 0 {
-        angular_velocity = dp.vec3()?;
-    }
-    let parent_id = if flags & 0x20 != 0 { dp.u32()? } else { 0 };
+    dp.take(header.offset)?;
+    let crate::object_header::CompressedHeader {
+        full_id,
+        local_id,
+        pcode,
+        state,
+        crc,
+        material,
+        click_action,
+        scale,
+        position,
+        rotation,
+        flags,
+        owner_id,
+        angular_velocity,
+        parent_id,
+        ..
+    } = header;
+    let rotation = aurora_msg::unpack_quat(rotation);
     let mut tree_species = None;
     if flags & 0x2 != 0 {
         tree_species = Some(dp.u8()?);

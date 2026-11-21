@@ -2,8 +2,9 @@
 
 Aurora Chat is a separate, experimental terminal executable for **Local,
 group and direct text chat**. It shares the viewer's login, TLS, packet codecs and
-reliable UDP transport, but does not start or build a renderer, graphical
-window, asset decoder, inventory, audio, voice or media subsystem.
+reliable UDP transport and inventory readers, but does not start or build a
+renderer, graphical window, asset decoder, inventory UI, audio, voice or media
+subsystem.
 The normal Aurora Viewer remains available.
 
 ## Build and run
@@ -106,14 +107,18 @@ This is in-memory formatting, not disk logging.
 
 Wide terminals show a chat sidebar with unread counts. At 110 columns or more,
 Local also shows a live radar sidebar. Narrow terminals show only the active
-chat; `/radar` remains available. Radar uses the simulator's coarse map
-locations, not object/appearance downloads: XY is quantized to roughly one
-metre and Z to four metres on a standard region. Distances and the normal-chat
-20-metre marker are **approximate**, especially near the boundary. Altitudes
-at or above the coarse limit (1020 m) are unknown, not falsely "in range."
+chat; `/radar` remains available. Radar requests short-range (32 m) simulator
+updates and uses avatar positions when available, without downloading
+appearance or building a scene. Otherwise it uses coarse map locations: XY
+is quantized to roughly one metre and Z to four metres on a standard region.
+When using coarse positions, distances and the normal-chat 20-metre marker
+are **approximate**, especially near the boundary. If the coarse altitude is
+unknown (including at or above 1020 m) and no usable avatar position arrived,
+the range stays unknown. Seated avatars can fall back to coarse locations
+because their exact positions depend on the seat.
 Only residents reported in the login region are listed; this is not proof
 of who can hear you across a boundary or with unusual region chat settings.
-Snapshots expire after 30 seconds without an update.
+Position records expire after 30 seconds without an update.
 
 Incoming DMs open a separate buffer without taking focus; plain text in that
 buffer replies to its peer. Direct messages do not require group session
@@ -143,19 +148,19 @@ The client now displays object IMs as well as ordinary object chat. However,
 script dialogs/text boxes and permission prompts are **not implemented**:
 the first of each received in a session produces a notice, and no response or
 permission grant is sent. No HUD touches, keyboard controls, local animation
-playback, AO engine or automatic animation-completion signaling are implemented either.
-An AO or HUD that needs those viewer features may still fail.
+playback or AO engine is implemented. An AO or HUD that needs those viewer
+features may still fail.
 
-For a persistent built-in transition, `/finishanim` is an explicit recovery
-experiment, not automatic playback or an AO implementation. It sends a reliable
-`AgentAnimation` stop for each currently reported built-in self transition
+Without an animation playback clock, the stationary client automatically
+requests completion of reported built-in self transitions. It sends a reliable
+`AgentAnimation` stop for each eligible transition
 (`land`, `medium_land`, `standup`, `prejump`) and one reliable `AgentUpdate`
 with `FINISH_ANIM`, following `LLAgent::requestStopMotion` / `onAnimStop`
 (`indra/newview/llagent.cpp`). Ordinary updates continue with zero control flags.
 This intentionally differs from the Legacy Viewer, which waits for playback
-completion: use it only to clear a transition that appears stuck. No animation
-asset is fetched; custom/AO animations are never stopped. Without a matching
-self transition, nothing is sent and a notice explains why.
+completion. No animation asset is fetched; custom/AO animations are never
+stopped. Use `/finishanim` to retry manually if a transition stays stuck.
+Without a matching self transition, nothing is sent and a notice explains why.
 
 After `/finishanim`, wait a few seconds and run `/diagnostics` again, then retry
 the HUD command. A request notice is **not** confirmation that the simulator
@@ -190,15 +195,25 @@ machine-readable form in every UI language.
 - `script_questions` and `permission_bits_seen` identify unanswered permission
   requests without identifying their scripts. `script_dialogs` counts
   unanswered dialog/text-box requests.
+- `self_hud_points` counts the objects listed at each HUD point in the most
+  recent self-appearance packet. `unknown` means the grid hasn't supplied a
+  snapshot; counts do not identify a particular HUD or prove it is working.
+  The list does not determine which attachments need restoring.
+- `outfit_restore` shows whether login restoration is waiting, fetching,
+  restoring, complete or failed, with counts of outfit objects, those observed
+  worn during restoration and attachment requests sent. Once restoration is
+  complete, the worn count is not a reliable live attachment list. A sent
+  request is not confirmation that an attachment arrived or its script works.
 - `self_animation_packets`, `latest_animations`, `latest_sources` and
   `last_update_age_seconds` describe the latest animation state received for
   your avatar only. `self_transition_states` names only built-in `standup`,
   `prejump`, `land` and `medium_land` states that ordinarily wait for viewer
   animation completion; it never exposes arbitrary asset IDs. No animation
   packet yet is different from a received packet with zero animations.
-- `transition_finish_requests` counts explicit recovery requests sent;
-  `automatic_animation_completion=disabled` confirms there is no timer or
-  blanket completion flag. The latest simulator animation state is not cleared
+- `transition_finish_requests` counts all completion requests;
+  `automatic_transition_finish_requests` counts the automatic subset.
+  `automatic_animation_completion=builtins_only` does not indicate playback or
+  a continuously set completion flag. The latest simulator animation state is not cleared
   locally when a request is sent.
 
 This is preferable to sharing a full viewer log or packet capture. In the
@@ -225,11 +240,15 @@ terminal's report for this problem.
   memory without bound. At most 128 reliable sends are pending.
 - Only the login region is connected. The client requests zero Land, Wind,
   Cloud, Texture and Asset bandwidth, 8 kbit/s Resend and 16 kbit/s Task, and
-  zero draw distance. Task must remain enabled for chat/control messages.
-  The simulator may still send world packets; they are acknowledged and
-  discarded **without decoding or retaining world objects**.
-- No textures, meshes, inventory, appearance/outfit requests or cache files.
-  Your avatar remains at the login location; its appearance is not managed.
+  a 32 m draw distance. Task must remain enabled for chat/control messages.
+  The client retains avatar positions for radar and, during login restoration,
+  bounded attachment item identities and parentage; it does not build a scene.
+- No textures, meshes, graphical inventory or cache files. The client reads
+  the Current Outfit Folder and requests missing objects at their saved points
+  in add mode, without changing the outfit or downloading assets. An incomplete
+  read or missing object identity stops restoration with a notice. A first
+  login's initial outfit is not supported. Your avatar remains at the login
+  location; its graphical appearance is not managed.
 - Diagnostics retain only bounded counters and known built-in transition
   labels. Self-animation and script-control packets are decoded only for these
   counters, without fetching or playing animations.
@@ -277,7 +296,8 @@ Los Angeles host timezones. English, French and Japanese terminal checks confirm
 object-message display, `/diagnostics` and the explicitly simulated `/finishanim`
 notice in Local and direct buffers. Recovery packet tests cover every supported
 built-in transition, duplicate/custom/foreign/removed animations, one-shot flags,
-arrival checks and reliable backpressure. Live recovery has not been validated.
+arrival checks and reliable backpressure. The human confirmed the AO no longer
+needs manual recovery during a live test; other transition cases remain unverified.
 The HUD follow-up changes no dependencies or licence notices.
 A pseudo-terminal check verifies actual Local/group/direct output, channel
 isolation, friends, radar, full-name recipients, switching, bracketed paste,
@@ -296,8 +316,10 @@ still need fresh live validation:
    shouts, `/me` actions and a message longer than 1023 bytes.
 3. Use `/groups` and `/join`; exchange messages in multiple groups. Confirm
    incoming invitations, unread counts, moderation, `/part` and reopening.
-4. With the command-listening HUD already worn, use `/local`, then `/3 roll`;
-   confirm the actual roll, signed channels where applicable, and that trying
+4. Put the command-listening HUD and another HUD on the same point in the
+   graphical viewer, then log into Aurora Chat. Allow the outfit to restore,
+   use `/diagnostics`, then `/local` and `/3 roll`; confirm both HUDs work and
+   the actual roll appears. Check incoming HUD events, signed channels where applicable, and that trying
    `/3 roll` from a group or DM is refused without sending there.
 5. Compare `/radar` and the wide Local sidebar with a nearby client at normal
    chat distance and beyond it. Check departure updates and unknown altitude

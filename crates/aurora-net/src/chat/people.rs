@@ -1,7 +1,7 @@
 //! Text-only people data. Follows LLStartUp's buddy list, LLAvatarTracker's
 //! presence notifications, LLAvatarNameCache::requestNamesViaCapability,
 //! LLViewerRegion::updateCoarseLocations and FSRadar::updateRadarList
-//! (indra/newview/); no objects, bridge, assets or appearance requests.
+//! (indra/newview/); only avatar positions are kept from object traffic.
 
 use super::*;
 use crate::social::AvatarNameData;
@@ -28,8 +28,14 @@ pub struct Friend {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Nearby {
     pub id: Uuid,
-    /// Approximate three-dimensional distance; unknown above coarse Z's limit.
+    /// Three-dimensional distance, approximate when using coarse locations.
     pub distance: Option<f32>,
+}
+
+struct AvatarPosition {
+    id: Uuid,
+    position: Vec3,
+    seen: Instant,
 }
 
 struct NameEntry {
@@ -44,6 +50,9 @@ pub(super) struct People {
     names: HashMap<Uuid, NameEntry>,
     nearby: Vec<Nearby>,
     nearby_at: Option<Instant>,
+    coarse: Vec<(Uuid, u8, u8, u8)>,
+    avatars: HashMap<u32, AvatarPosition>,
+    radar_dirty: bool,
     pub lookup_active: bool,
     pub warned: bool,
 }
@@ -192,17 +201,37 @@ impl Session {
     }
 
     fn nearby_snapshot(&mut self, positions: Vec<(Uuid, u8, u8, u8)>) -> Result<(), Error> {
-        let origin = positions
-            .iter()
-            .find(|(id, ..)| *id == self.login.agent_id)
-            .and_then(|(_, x, y, z)| self.coarse_position(*x, *y, *z))
-            .unwrap_or(self.position);
+        self.people.coarse = positions;
+        self.people.nearby_at = Some(Instant::now());
+        self.publish_nearby()
+    }
+
+    fn publish_nearby(&mut self) -> Result<(), Error> {
+        self.people.radar_dirty = false;
+        let precise: HashMap<_, _> = self.people.avatars.values().map(|p| (p.id, p.position)).collect();
+        let origin = precise
+            .get(&self.login.agent_id)
+            .copied()
+            .or_else(|| {
+                self.people
+                    .coarse
+                    .iter()
+                    .find(|(id, ..)| *id == self.login.agent_id)
+                    .and_then(|(_, x, y, z)| self.coarse_position(*x, *y, *z))
+            })
+            .or_else(|| self.arrived.then_some(self.position).filter(|p| p.is_finite()));
         let mut nearby = Vec::new();
         let mut seen = HashSet::new();
-        for (id, x, y, z) in positions.into_iter().take(MAX_RESIDENTS) {
+        for &(id, x, y, z) in &self.people.coarse {
             if !id.is_nil() && id != self.login.agent_id && seen.insert(id) {
-                self.observe_name(id, "")?;
-                let distance = self.coarse_position(x, y, z).map(|p| p.distance(origin));
+                let position = precise.get(&id).copied().or_else(|| self.coarse_position(x, y, z));
+                let distance = position.zip(origin).map(|(p, o)| p.distance(o)).filter(|d| d.is_finite());
+                nearby.push(Nearby { id, distance });
+            }
+        }
+        for (id, position) in precise {
+            if id != self.login.agent_id && seen.insert(id) && nearby.len() < MAX_RESIDENTS {
+                let distance = origin.map(|o| position.distance(o)).filter(|d| d.is_finite());
                 nearby.push(Nearby { id, distance });
             }
         }
@@ -212,8 +241,10 @@ impl Session {
                 .total_cmp(&b.distance.unwrap_or(f32::INFINITY))
                 .then(a.id.cmp(&b.id))
         });
-        self.people.nearby_at = Some(Instant::now());
         if nearby != self.people.nearby {
+            for entry in &nearby {
+                self.observe_name(entry.id, "")?;
+            }
             self.people.nearby = nearby.clone();
             self.emit(Event::Nearby(nearby))?;
         }
@@ -221,7 +252,75 @@ impl Session {
     }
 
     fn coarse_position(&self, x: u8, y: u8, z: u8) -> Option<Vec3> {
-        (z != 255).then(|| social::coarse_position(x, y, z, (self.login.region_size_x, self.login.region_size_y)))
+        (!matches!(z, 0 | 255)).then(|| social::coarse_position(x, y, z, (self.login.region_size_x, self.login.region_size_y)))
+    }
+
+    pub(super) fn avatar_positions(&mut self, message: &ObjectUpdate) {
+        if message.region_data.region_handle != self.login.region_handle() {
+            return;
+        }
+        for block in &message.object_data {
+            // LLViewerObject::processUpdateMessage: avatar (0x2f), optional
+            // foot plane, then XYZ. Parent-relative poses need a world model.
+            if block.p_code != 0x2f || block.parent_id != 0 || block.full_id.is_nil() {
+                self.forget_avatar_position(block.id);
+                continue;
+            }
+            let offset = match block.object_data.len() {
+                60 | 124 => 0,
+                76 | 140 => 16,
+                _ => {
+                    log::debug!("chat: unsupported full avatar motion block length");
+                    self.forget_avatar_position(block.id);
+                    continue;
+                }
+            };
+            if let Some(position) = motion_position(&block.object_data[offset..]) {
+                self.people
+                    .avatars
+                    .retain(|local_id, p| *local_id == block.id || p.id != block.full_id);
+                if self.people.avatars.len() < MAX_RESIDENTS || self.people.avatars.contains_key(&block.id) {
+                    self.people.avatars.insert(
+                        block.id,
+                        AvatarPosition {
+                            id: block.full_id,
+                            position,
+                            seen: Instant::now(),
+                        },
+                    );
+                    self.people.radar_dirty = true;
+                }
+            } else {
+                log::debug!("chat: ignoring non-finite avatar position");
+                self.forget_avatar_position(block.id);
+            }
+        }
+    }
+
+    pub(super) fn terse_positions(&mut self, message: &ImprovedTerseObjectUpdate) {
+        if message.region_data.region_handle != self.login.region_handle() {
+            return;
+        }
+        for block in &message.object_data {
+            let data = &block.data;
+            // Local ID, state, avatar flag, foot plane, XYZ.
+            if data.get(5).is_some_and(|&avatar| avatar != 0)
+                && let Some(id) = data.first_chunk::<4>().copied().map(u32::from_le_bytes)
+                && let Some(entry) = self.people.avatars.get_mut(&id)
+            {
+                if let Some(position) = data.get(22..).and_then(motion_position) {
+                    self.people.radar_dirty |= entry.position != position;
+                    entry.position = position;
+                    entry.seen = Instant::now();
+                } else {
+                    log::debug!("chat: ignoring invalid terse avatar position");
+                }
+            }
+        }
+    }
+
+    pub(super) fn forget_avatar_position(&mut self, local_id: u32) {
+        self.people.radar_dirty |= self.people.avatars.remove(&local_id).is_some();
     }
 
     pub(super) fn coarse_locations(&mut self, message: &CoarseLocationUpdate) -> Result<(), Error> {
@@ -229,6 +328,7 @@ impl Session {
             .location
             .iter()
             .zip(&message.agent_data)
+            .take(MAX_RESIDENTS)
             .map(|(p, agent)| (agent.agent_id, p.x, p.y, p.z))
             .collect();
         self.nearby_snapshot(positions)
@@ -239,6 +339,7 @@ impl Session {
             .as_array()
             .iter()
             .zip(body["AgentData"].as_array())
+            .take(MAX_RESIDENTS)
             .filter_map(|(p, agent)| {
                 match (
                     u8::try_from(p["X"].as_i32()),
@@ -257,13 +358,30 @@ impl Session {
     }
 
     pub(super) fn expire_nearby(&mut self) -> Result<(), Error> {
+        let previous = self.people.avatars.len();
+        self.people.avatars.retain(|_, entry| entry.seen.elapsed() < RADAR_TTL);
+        self.people.radar_dirty |= self.people.avatars.len() != previous;
         if self.people.nearby_at.is_some_and(|at| at.elapsed() >= RADAR_TTL) {
             self.people.nearby_at = None;
-            self.people.nearby.clear();
-            self.emit(Event::Nearby(Vec::new()))?;
+            self.people.coarse.clear();
+            self.people.radar_dirty = true;
+        }
+        if self.people.radar_dirty {
+            self.publish_nearby()?;
         }
         Ok(())
     }
+}
+
+fn motion_position(data: &[u8]) -> Option<Vec3> {
+    let data: &[u8; 12] = data.get(..12)?.try_into().ok()?;
+    let (axes, _) = data.as_chunks::<4>();
+    let position = Vec3::new(
+        f32::from_le_bytes(axes[0]),
+        f32::from_le_bytes(axes[1]),
+        f32::from_le_bytes(axes[2]),
+    );
+    position.is_finite().then_some(position)
 }
 
 /// One bounded request at a time; batching follows LLAvatarNameCache's URL limit.
@@ -308,10 +426,59 @@ pub(super) async fn lookup_names(http: &reqwest::Client, cap: &str, ids: &[Uuid]
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::fixture;
+    use super::super::tests::{fixture, incoming};
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn chat_radar_recovers_four_metres_above_the_coarse_ceiling() {
+        let (mut session, mut events, _) = fixture().await;
+        let me = session.login.agent_id;
+        let peer = Uuid::from_u128(42);
+        session.nearby_snapshot(vec![(me, 10, 10, 255), (peer, 10, 10, 255)]).unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Nearby(rows)) if rows[0].distance.is_none()));
+
+        let mut full = ObjectUpdate::default();
+        full.region_data.region_handle = session.login.region_handle();
+        for (id, avatar, z) in [(1, me, 1500.0_f32), (2, peer, 1504.0)] {
+            let mut xyz = vec![0; 76];
+            xyz[16..20].copy_from_slice(&10.0_f32.to_le_bytes());
+            xyz[20..24].copy_from_slice(&10.0_f32.to_le_bytes());
+            xyz[24..28].copy_from_slice(&z.to_le_bytes());
+            full.object_data.push(object_update::ObjectData {
+                id,
+                full_id: avatar,
+                p_code: 0x2f,
+                object_data: xyz,
+                ..Default::default()
+            });
+        }
+        session.received(&incoming(&full)).unwrap();
+        session.expire_nearby().unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Nearby(rows)) if rows == vec![Nearby { id: peer, distance: Some(4.0) }]));
+
+        let mut terse = ImprovedTerseObjectUpdate::default();
+        terse.region_data.region_handle = full.region_data.region_handle;
+        let mut data = vec![0; 60];
+        data[..4].copy_from_slice(&2_u32.to_le_bytes());
+        data[5] = 1;
+        data[22..30].copy_from_slice(&full.object_data[1].object_data[16..24]);
+        data[30..34].copy_from_slice(&1505.0_f32.to_le_bytes());
+        terse.object_data.push(improved_terse_object_update::ObjectData {
+            data,
+            texture_entry: Vec::new(),
+        });
+        session.received(&incoming(&terse)).unwrap();
+        session.expire_nearby().unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Nearby(rows)) if rows[0].distance == Some(5.0)));
+
+        let mut kill = KillObject::default();
+        kill.object_data.push(kill_object::ObjectData { id: 2 });
+        session.received(&incoming(&kill)).unwrap();
+        session.expire_nearby().unwrap();
+        assert!(matches!(events.try_recv(), Ok(Event::Nearby(rows)) if rows[0].distance.is_none()));
+    }
 
     #[tokio::test]
     async fn chat_radar_scales_xyz_omits_self_deduplicates_and_expires() {
@@ -352,6 +519,7 @@ mod tests {
     #[tokio::test]
     async fn chat_radar_udp_and_capability_snapshots_agree_and_replace_departures() {
         let (mut session, mut events, _) = fixture().await;
+        session.arrived = true;
         session.position = Vec3::new(0.0, 0.0, 40.0);
         let peer = Uuid::from_u128(42);
         let mut wire = CoarseLocationUpdate::default();

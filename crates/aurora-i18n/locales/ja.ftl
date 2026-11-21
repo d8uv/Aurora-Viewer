@@ -15996,4 +15996,5 @@ tui-finishanim-requested = 組み込み遷移の完了を要求しました（{ 
 tui-finishanim-demo = オフラインデモ：/finishanimは何も送信せず、アニメーションの復旧もシミュレートしません。
 tui-script-permissions-unsupported = スクリプトが権限を要求しました。このクライアントはまだ権限要求に応答できません。何も許可していません。要求された権限ビットは /diagnostics で確認できます。
 tui-script-dialog-unsupported = スクリプトがダイアログまたは入力欄を開きました。このクライアントはまだ応答できません。/diagnostics で受信を確認できます。返信は送信していません。
+tui-outfit-restore-failed = 衣装の一部の装着物を復元できませんでした。グラフィカルビューアで衣装を確認してください。
 tui-demo-object-message = これはデモのオブジェクト IM です。所有者への IM を開かず、Local に表示します。

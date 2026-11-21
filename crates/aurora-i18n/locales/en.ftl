@@ -16119,4 +16119,5 @@ tui-finishanim-requested = Requested completion of built-in transitions: { $coun
 tui-finishanim-demo = Offline demo: /finishanim sends nothing and simulates no animation recovery.
 tui-script-permissions-unsupported = A script requested permissions. This client cannot answer permission requests yet; nothing was granted. Use /diagnostics to inspect the requested permission bits.
 tui-script-dialog-unsupported = A script opened a dialog or text box. This client cannot answer it yet. Use /diagnostics to confirm receipt; no reply was sent.
+tui-outfit-restore-failed = Some outfit attachments could not be restored. Check the outfit in the graphical viewer.
 tui-demo-object-message = This is a simulated object instant message, shown in Local without opening an IM to its owner.

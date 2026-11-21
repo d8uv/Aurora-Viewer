@@ -1,7 +1,7 @@
 //! Bounded protocol counters, never packet contents or remote identifiers.
 
 use super::Session;
-use aurora_msg::msgs::{AvatarAnimation, ScriptControlChange};
+use aurora_msg::msgs::{AvatarAnimation, AvatarAppearance, ScriptControlChange};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -32,12 +32,15 @@ pub(super) struct State {
     control_packets: u64,
     controls_taken: u64,
     controls_released: u64,
+    hud_points: Option<[u16; 8]>,
     animation_packets: u64,
     animation_count: usize,
     animation_sources: usize,
     transition_bits: u8,
+    auto_finished_bits: u8,
     animation_at: Option<Instant>,
     transition_finish_requests: u64,
+    automatic_transition_finish_requests: u64,
 }
 
 impl State {
@@ -91,17 +94,49 @@ impl State {
         }
     }
 
+    pub(super) fn self_attachment_snapshot(&mut self, message: &AvatarAppearance) {
+        // LLVOAvatar::processAvatarAppearance: ignore pending entries and
+        // count each object at its last listed point. Never retain the IDs.
+        let reported: BTreeMap<_, _> = message
+            .attachment_block
+            .iter()
+            .filter(|entry| !entry.id.is_nil())
+            .map(|entry| (entry.id, entry.attachment_point))
+            .collect();
+        let mut points = [0; 8];
+        for &point in reported.values() {
+            if (31..=38).contains(&point) {
+                points[usize::from(point - 31)] += 1;
+            }
+        }
+        self.hud_points = Some(points);
+    }
+
+    fn hud_points_line(&self) -> String {
+        let Some(points) = self.hud_points else {
+            return "self_hud_points: unknown".into();
+        };
+        let counts = (31..=38)
+            .zip(points)
+            .map(|(point, count)| format!("{point}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("self_hud_points: {counts}")
+    }
+
     pub(super) fn self_animations(&mut self, message: &AvatarAnimation) {
         self.animation_packets = self.animation_packets.saturating_add(1);
         self.animation_at = Some(Instant::now());
         self.animation_count = message.animation_list.len();
         self.animation_sources = message.animation_source_list.len();
-        self.transition_bits = 0;
+        let mut transition_bits = 0;
         for animation in &message.animation_list {
             if let Some(index) = TRANSITIONS.iter().position(|(id, _)| *id == animation.anim_id.as_u128()) {
-                self.transition_bits |= 1 << index;
+                transition_bits |= 1 << index;
             }
         }
+        self.transition_bits = transition_bits;
+        self.auto_finished_bits &= self.transition_bits;
     }
 
     pub(super) fn transition_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
@@ -111,8 +146,23 @@ impl State {
             .filter_map(|(i, (id, _))| (self.transition_bits & (1 << i) != 0).then_some(Uuid::from_u128(*id)))
     }
 
-    pub(super) fn transition_finish_requested(&mut self) {
+    pub(super) fn pending_automatic_transition_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        TRANSITIONS.iter().enumerate().filter_map(|(i, (id, _))| {
+            let bit = 1 << i;
+            (self.transition_bits & bit != 0 && self.auto_finished_bits & bit == 0).then_some(Uuid::from_u128(*id))
+        })
+    }
+
+    pub(super) fn transition_finish_requested(&mut self, ids: &[Uuid], automatic: bool) {
         self.transition_finish_requests = self.transition_finish_requests.saturating_add(1);
+        if automatic {
+            self.automatic_transition_finish_requests = self.automatic_transition_finish_requests.saturating_add(1);
+            for id in ids {
+                if let Some(index) = TRANSITIONS.iter().position(|(transition, _)| *transition == id.as_u128()) {
+                    self.auto_finished_bits |= 1 << index;
+                }
+            }
+        }
     }
 
     fn lines(&self) -> Vec<String> {
@@ -154,10 +204,11 @@ impl State {
             ),
             "animation_playback=disabled appearance_loading=disabled".into(),
             format!(
-                "transition_finish_requests={} automatic_animation_completion=disabled",
-                self.transition_finish_requests
+                "transition_finish_requests={} automatic_transition_finish_requests={} automatic_animation_completion=builtins_only",
+                self.transition_finish_requests, self.automatic_transition_finish_requests
             ),
         ];
+        lines.push(self.hud_points_line());
         for (label, values) in [
             ("received_im_dialogs", &self.instant_messages),
             ("received_local_chat_types", &self.local_chats),
@@ -196,6 +247,7 @@ impl Session {
                 self.stats.decode_errors.load(Ordering::Relaxed),
             ),
         ];
+        lines.push(self.outfit.diagnostic_line());
         lines.extend(self.diagnostics.lines());
         lines
     }

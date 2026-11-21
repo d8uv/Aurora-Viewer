@@ -4,16 +4,24 @@
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 pub mod ais;
-#[cfg(test)]
+#[cfg(all(test, feature = "viewer"))]
 mod gesture_tests;
+#[cfg(feature = "viewer")]
 pub mod mesh_upload;
+#[cfg(feature = "viewer")]
 pub mod notecard;
+#[cfg(feature = "viewer")]
 pub mod operations;
+#[cfg(feature = "viewer")]
 pub mod orphans;
+#[cfg(feature = "viewer")]
 pub mod rez;
+#[cfg(feature = "viewer")]
 pub mod thumbnail;
+#[cfg(feature = "viewer")]
 pub mod upload;
 
+#[cfg(feature = "viewer")]
 pub fn created_date(seconds: i64) -> String {
     let (year, month, day) = crate::profile::civil_from_days(seconds.div_euclid(86400));
     format!("{day:02}/{month:02}/{year}")

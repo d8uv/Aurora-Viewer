@@ -16,7 +16,6 @@ pub mod group_money;
 pub mod groups;
 pub mod home;
 mod im_reply;
-pub mod inventory;
 pub mod land;
 pub mod land_tool;
 pub mod local_bakes;

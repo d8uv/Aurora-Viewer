@@ -29,7 +29,12 @@
 //! like the Avatar Welcome Pack's `wear_folder` (`app/avatar_welcome.rs`).
 
 use super::inventory::{FetchState, Inventory};
+#[cfg(test)]
 use aurora_net::inventory::InvItem;
+pub use aurora_net::outfit_restore::attach_request;
+#[cfg(test)]
+use aurora_net::outfit_restore::{MAX_SETTLE, NO_RESTORE, SETTLE};
+use aurora_net::outfit_restore::{QUIET, restore_settled};
 use aurora_net::{AttachRequest, NetCommand};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -37,21 +42,15 @@ use uuid::Uuid;
 
 /// LLFolderType::FT_CURRENT_OUTFIT.
 pub const FT_CURRENT_OUTFIT: i32 = 46;
+#[cfg(test)]
 const ASSET_LINK: i32 = 24;
+#[cfg(test)]
 const ASSET_OBJECT: i32 = 6;
+#[cfg(test)]
 const INV_OBJECT: i32 = 6;
+#[cfg(test)]
 const INV_ATTACHMENT: i32 = 17;
 
-/// Nothing is requested sooner than this after arriving in the region
-/// (a quick relog can still have the objects on the region).
-const SETTLE: Duration = Duration::from_secs(4);
-/// The region's own restore is over once no object of the outfit has
-/// arrived for this long.
-const QUIET: Duration = Duration::from_secs(4);
-/// No object arrived at all by then: the region restores nothing.
-const NO_RESTORE: Duration = Duration::from_secs(12);
-/// The requests leave by then whatever the region does.
-const MAX_SETTLE: Duration = Duration::from_secs(30);
 /// Requests that produced nothing are sent once more after this.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
 /// LLAttachmentsMgr MIN_RETRY_REQUEST_TIME: an item requested this
@@ -194,25 +193,7 @@ pub fn cof_objects(inv: &Inventory, cof: Uuid) -> Vec<Uuid> {
     let Some(f) = inv.folders.get(&cof) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    for id in &f.items {
-        let Some(link) = inv.items.get(id) else {
-            continue;
-        };
-        if link.asset_type != ASSET_LINK || link.asset_id.is_nil() {
-            continue;
-        }
-        let target = inv.items.get(&link.asset_id);
-        let is_object = match target {
-            // a link left to a coalesced object is never worn (#1668)
-            Some(t) => t.asset_type == ASSET_OBJECT && !super::appearance::coalesced(t),
-            None => matches!(link.inv_type, INV_OBJECT | INV_ATTACHMENT),
-        };
-        if is_object && !out.contains(&link.asset_id) {
-            out.push(link.asset_id);
-        }
-    }
-    out
+    aurora_net::outfit_restore::cof_object_targets(f.items.iter().filter_map(|id| inv.items.get(id)), |id| inv.items.get(id))
 }
 
 /// The Current Outfit folder of the agent's inventory.
@@ -221,39 +202,6 @@ fn find_cof(inv: &Inventory) -> Option<Uuid> {
         .values()
         .find(|f| f.info.type_default == FT_CURRENT_OUTFIT && !f.library)
         .map(|f| f.info.id)
-}
-
-/// RezMultipleAttachmentsFromInv for `item` where it was last worn, added
-/// to what the point holds (LLAttachmentsMgr::addAttachmentRequest(id, 0, true)).
-pub fn attach_request(item: &InvItem, agent: Uuid) -> AttachRequest {
-    AttachRequest {
-        item_id: item.id,
-        owner_id: if item.owner.is_nil() { agent } else { item.owner },
-        point: 0,
-        add: true,
-        flags: item.flags,
-        group_mask: item.group_mask,
-        everyone_mask: item.everyone_mask,
-        next_owner_mask: item.next_owner_mask,
-        name: item.name.clone(),
-        desc: item.desc.clone(),
-    }
-}
-
-/// Whether the region is done putting back the outfit by itself, from when
-/// the region was ready and when an outfit object last arrived.
-fn restore_settled(now: Instant, ready_at: Instant, last_arrival: Option<Instant>) -> bool {
-    let waited = now.saturating_duration_since(ready_at);
-    if waited < SETTLE {
-        return false;
-    }
-    if waited >= MAX_SETTLE {
-        return true;
-    }
-    match last_arrival {
-        Some(at) => now.saturating_duration_since(at) >= QUIET,
-        None => waited >= NO_RESTORE,
-    }
 }
 
 /// Item names for the log, quoted and comma separated.

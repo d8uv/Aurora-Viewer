@@ -1517,21 +1517,7 @@ pub enum NetEvent {
 
 pub use crate::social::AvatarNameData;
 
-/// One object to attach from the inventory (point 0 = where it was last worn).
-#[derive(Debug, Clone)]
-pub struct AttachRequest {
-    pub item_id: Uuid,
-    pub owner_id: Uuid,
-    pub point: u8,
-    /// Keep what is already on the point (ATTACHMENT_ADD).
-    pub add: bool,
-    pub flags: u32,
-    pub group_mask: u32,
-    pub everyone_mask: u32,
-    pub next_owner_mask: u32,
-    pub name: String,
-    pub desc: String,
-}
+pub use crate::outfit_restore::AttachRequest;
 
 /// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
 /// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
